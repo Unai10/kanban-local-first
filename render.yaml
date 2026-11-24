@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: kanban-localfirst-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: DATABASE_PATH
+        value: /tmp/kanban-data.sqlite
+      - key: WS_HEARTBEAT_INTERVAL_MS
+        value: "15000"
