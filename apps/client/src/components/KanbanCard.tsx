@@ -110,7 +110,7 @@ export function KanbanCardView({
       {...attributes}
       {...listeners}
       onClick={() => onClick(card)}
-      className={`bg-surface hover:bg-surfaceHover border border-border p-3 rounded-lg shadow-sm mb-3 group transition-all duration-150 relative overflow-visible select-none ${
+      className={`bg-surface hover:bg-surfaceHover border border-border p-3 rounded-lg shadow-sm mb-3 group transition-colors duration-150 relative overflow-visible select-none ${
         isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing hover:border-slate-600'
       }`}
     >

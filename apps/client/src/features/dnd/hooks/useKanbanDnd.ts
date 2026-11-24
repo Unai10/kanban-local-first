@@ -39,6 +39,11 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
   const localCardsRef = useRef(localCards);
   const moveCardRef = useRef(moveCard);
   const onUpdateActivityRef = useRef(onUpdateActivity);
+  const lastColumnSwapRef = useRef<{
+    fromColId: string;
+    toColId: string;
+    timestamp: number;
+  } | null>(null);
 
   useEffect(() => {
     cardsRef.current = cards;
@@ -60,6 +65,7 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
   );
 
   const cleanup = useCallback(() => {
+    lastColumnSwapRef.current = null;
     setActiveCard(null);
     setLocalCards(null);
     document.body.classList.remove('is-dragging');
@@ -69,6 +75,7 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const cardData = event.active.data.current?.card as Card | undefined;
     if (cardData) {
+      lastColumnSwapRef.current = null;
       setActiveCard(cardData);
       setLocalCards(cardsRef.current);
       document.body.classList.add('is-dragging');
@@ -91,14 +98,38 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
     const currentColumns = columnsRef.current;
     const isOverColumn = currentColumns.some(col => col.id === overId);
 
+    let targetColId: string;
     if (isOverColumn) {
-      if (activeSnapshotItem.columnId === overId) return;
+      targetColId = overId;
     } else {
       const overSnapshotItem = currentSnapshot.find(c => c.id === overId);
-      if (!overSnapshotItem || activeSnapshotItem.columnId === overSnapshotItem.columnId) {
+      if (!overSnapshotItem) return;
+      targetColId = overSnapshotItem.columnId;
+    }
+
+    if (activeSnapshotItem.columnId === targetColId) {
+      return;
+    }
+
+    // Evita bucles de rebote (ping-pong) cuando SortableContext re-mide contenedores tras mover de columna
+    const now = Date.now();
+    const lastSwap = lastColumnSwapRef.current;
+    if (lastSwap) {
+      const elapsed = now - lastSwap.timestamp;
+      if (elapsed < 50) return;
+      if (
+        elapsed < 180 &&
+        lastSwap.toColId === activeSnapshotItem.columnId &&
+        lastSwap.fromColId === targetColId
+      ) {
         return;
       }
     }
+    lastColumnSwapRef.current = {
+      fromColId: activeSnapshotItem.columnId,
+      toColId: targetColId,
+      timestamp: now,
+    };
 
     setLocalCards(prev => {
       const current = prev ?? cardsRef.current;

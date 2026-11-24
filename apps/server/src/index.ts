@@ -24,7 +24,7 @@ export function parseAllowedOrigins(allowedOriginsRaw: string): string[] {
   }
   return allowedOriginsRaw
     .split(',')
-    .map(o => o.trim().toLowerCase())
+    .map(o => o.trim().replace(/\/+$/, '').toLowerCase())
     .filter(Boolean);
 }
 
