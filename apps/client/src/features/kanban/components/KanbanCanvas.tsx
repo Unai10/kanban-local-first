@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -16,6 +16,7 @@ import { CardModal } from '../../../components/Modals/CardModal.js';
 import { CreateCardModal } from '../../../components/Modals/CreateCardModal.js';
 import { CollaboratorCursors } from '../../presence/components/CollaboratorCursors.js';
 import { useCursorBroadcast } from '../../presence/hooks/useCursorBroadcast.js';
+import { useDesktopFinePointer } from '../../presence/hooks/useDesktopFinePointer.js';
 
 interface Props {
   columns: Column[];
@@ -70,10 +71,13 @@ export function KanbanCanvas({
 }: Props) {
   const containerRef = useRef<HTMLElement | null>(null);
   const [createCardColumnId, setCreateCardColumnId] = useState<string | null>(null);
+  const [activeMobileColId, setActiveMobileColId] = useState<string | null>(null);
+  const isDesktopPointer = useDesktopFinePointer();
 
   useCursorBroadcast({
     containerRef,
     onCursorMove: onUpdateCursor,
+    enabled: isDesktopPointer,
   });
 
   const cardsByColumn = useMemo(() => {
@@ -90,6 +94,67 @@ export function KanbanCanvas({
     return grouped;
   }, [columns, displayCards]);
 
+  const cardColumnById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const card of displayCards) {
+      map.set(card.id, card.columnId);
+    }
+    return map;
+  }, [displayCards]);
+
+  const columnActivityColor = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const collab of collaborators) {
+      if (collab.userId === currentUser.id || !collab.activity) continue;
+      const targetColId =
+        collab.activity.columnId ??
+        (collab.activity.cardId ? cardColumnById.get(collab.activity.cardId) : undefined);
+      if (targetColId && !map.has(targetColId)) {
+        map.set(targetColId, collab.avatarColor);
+      }
+    }
+    return map;
+  }, [collaborators, currentUser.id, cardColumnById]);
+
+  const selectedMobileColId =
+    activeMobileColId && columns.some(col => col.id === activeMobileColId)
+      ? activeMobileColId
+      : (columns[0]?.id ?? null);
+
+  const handleSelectMobileColumn = useCallback((colId: string) => {
+    setActiveMobileColId(colId);
+    const container = containerRef.current;
+    if (!container) return;
+    const colEl = container.querySelector<HTMLElement>(`[data-column-id="${CSS.escape(colId)}"]`);
+    if (!colEl) return;
+    const targetLeft = Math.max(0, colEl.offsetLeft - (container.clientWidth - colEl.clientWidth) / 2);
+    container.scrollTo({ left: targetLeft, behavior: 'smooth' });
+  }, []);
+
+  const handleCanvasScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const colEls = Array.from(container.querySelectorAll<HTMLElement>('[data-column-id]'));
+    if (colEls.length === 0) return;
+
+    const viewportCenter = container.scrollLeft + container.clientWidth / 2;
+    let closestId: string | null = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (const el of colEls) {
+      const elCenter = el.offsetLeft + el.clientWidth / 2;
+      const distance = Math.abs(elCenter - viewportCenter);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestId = el.dataset.columnId ?? null;
+      }
+    }
+
+    if (closestId) {
+      setActiveMobileColId(closestId);
+    }
+  }, []);
+
   const handleOpenCreateCard = (colId: string) => {
     setCreateCardColumnId(colId);
     onUpdateActivity?.({ action: 'creating-card', columnId: colId });
@@ -102,51 +167,96 @@ export function KanbanCanvas({
 
   return (
     <>
-      <main ref={containerRef} className="flex-1 p-6 overflow-x-auto relative min-w-full">
-        <CollaboratorCursors
-          collaborators={collaborators}
-          currentUserId={currentUser.id}
-        />
+      <div className="flex-1 flex flex-col min-h-0">
+        {columns.length > 0 && (
+          <nav
+            aria-label="Columnas del tablero"
+            className="md:hidden flex items-center gap-1.5 px-3 py-2 border-b border-border/70 bg-slate-950/60 overflow-x-auto no-scrollbar shrink-0"
+          >
+            {columns.map(column => {
+              const isSelected = column.id === selectedMobileColId;
+              const colCardsCount = cardsByColumn.get(column.id)?.length ?? 0;
+              const activityColor = columnActivityColor.get(column.id);
+              return (
+                <button
+                  key={column.id}
+                  type="button"
+                  onClick={() => handleSelectMobileColumn(column.id)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap border transition shrink-0 ${
+                    isSelected
+                      ? 'bg-primary/20 text-white border-primary/50'
+                      : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  {activityColor && (
+                    <span
+                      style={{ backgroundColor: activityColor }}
+                      className="w-2 h-2 rounded-full animate-pulse shrink-0"
+                      aria-label="Colaborador activo en esta columna"
+                    />
+                  )}
+                  <span>{column.title}</span>
+                  <span className="text-[10px] font-mono bg-slate-800/90 text-slate-300 px-1.5 py-0.5 rounded-full">
+                    {colCardsCount}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={collisionDetection}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-          onDragCancel={handleDragCancel}
+        <main
+          ref={containerRef}
+          onScroll={handleCanvasScroll}
+          className={`flex-1 p-3 sm:p-6 overflow-x-auto relative min-w-full ${
+            activeCard ? '' : 'snap-x snap-mandatory md:snap-none'
+          }`}
         >
-          <div className="flex items-start gap-6">
-            {columns.map(column => (
-              <KanbanColumn
-                key={column.id}
-                column={column}
-                cards={cardsByColumn.get(column.id) ?? []}
-                onOpenCreateCard={handleOpenCreateCard}
-                onDeleteCard={deleteCard}
-                onCardClick={onSelectCard}
-                collaborators={collaborators}
-                currentUserId={currentUser.id}
-              />
-            ))}
-          </div>
+          <CollaboratorCursors
+            collaborators={collaborators}
+            currentUserId={currentUser.id}
+          />
 
-          <DragOverlay dropAnimation={null}>
-            {activeCard ? (
-              <div className="cursor-grabbing rotate-1 scale-105 shadow-2xl">
-                <KanbanCardView
-                  card={activeCard}
-                  isOverlay
-                  onDelete={() => {}}
-                  onClick={() => {}}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={collisionDetection}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
+            <div className="flex items-start gap-3 sm:gap-6">
+              {columns.map(column => (
+                <KanbanColumn
+                  key={column.id}
+                  column={column}
+                  cards={cardsByColumn.get(column.id) ?? []}
+                  onOpenCreateCard={handleOpenCreateCard}
+                  onDeleteCard={deleteCard}
+                  onCardClick={onSelectCard}
                   collaborators={collaborators}
                   currentUserId={currentUser.id}
                 />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      </main>
+              ))}
+            </div>
+
+            <DragOverlay dropAnimation={null}>
+              {activeCard ? (
+                <div className="cursor-grabbing rotate-1 scale-105 shadow-2xl">
+                  <KanbanCardView
+                    card={activeCard}
+                    isOverlay
+                    onDelete={() => {}}
+                    onClick={() => {}}
+                    collaborators={collaborators}
+                    currentUserId={currentUser.id}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        </main>
+      </div>
 
       <CreateCardModal
         isOpen={createCardColumnId !== null}

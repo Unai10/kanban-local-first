@@ -63,7 +63,7 @@ export function ShareModal({
       aria-labelledby="share-modal-title"
     >
       <div
-        className="bg-surface border border-border w-full max-w-md rounded-xl shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-150"
+        className="bg-surface border border-border w-full max-w-md max-h-[92dvh] overflow-y-auto rounded-xl shadow-2xl p-4 sm:p-6 relative animate-in fade-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
         <button
@@ -75,13 +75,13 @@ export function ShareModal({
           <X className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-2.5 mb-2">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+        <div className="flex items-center gap-2.5 mb-2 pr-8">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold shrink-0">
             <ShieldCheck className="w-4 h-4" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <h3 id="share-modal-title" className="text-sm font-semibold text-white">Compartir Tablero</h3>
-            <p className="text-xs text-slate-400 truncate max-w-[280px]">{boardTitle}</p>
+            <p className="text-xs text-slate-400 truncate">{boardTitle}</p>
           </div>
         </div>
 
@@ -95,7 +95,7 @@ export function ShareModal({
               <Hash className="w-3.5 h-3.5 text-emerald-400" />
               Código de Sala Rápido
             </span>
-            <div className="flex items-center justify-between bg-slate-900 border border-slate-700 p-2.5 rounded-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900 border border-slate-700 p-2.5 rounded-lg">
               <span className="text-lg font-mono font-bold tracking-widest text-emerald-400 pl-2">
                 {joinCode}
               </span>

@@ -38,17 +38,18 @@ export function KanbanColumn({
 
   return (
     <div
+      data-column-id={column.id}
       style={creatingCollaborator ? {
         borderColor: creatingCollaborator.avatarColor,
         boxShadow: `0 0 0 1px ${creatingCollaborator.avatarColor}40`
       } : undefined}
-      className="flex flex-col w-80 bg-slate-900/60 border border-slate-800 rounded-xl p-3 shrink-0 max-h-[85vh] transition-all duration-150"
+      className="flex flex-col w-[85vw] max-w-[340px] sm:w-80 bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 sm:p-3 shrink-0 snap-center md:snap-align-none max-h-[calc(100dvh-10.5rem)] md:max-h-[85vh] transition-all duration-150"
     >
       {/* Cabecera de la columna */}
-      <div className="flex items-center justify-between mb-3 px-1">
-        <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-sm text-slate-200">{column.title}</h3>
-          <span className="text-xs font-mono bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
+      <div className="flex items-center justify-between mb-2.5 sm:mb-3 px-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="font-semibold text-sm text-slate-200 truncate">{column.title}</h3>
+          <span className="text-xs font-mono bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full shrink-0">
             {cards.length}
           </span>
         </div>
@@ -56,7 +57,7 @@ export function KanbanColumn({
           type="button"
           onClick={() => onOpenCreateCard(column.id)}
           aria-label={`Añadir tarjeta a ${column.title}`}
-          className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded transition"
+          className="text-slate-400 hover:text-white p-1.5 sm:p-1 hover:bg-slate-800 rounded transition shrink-0"
           title="Añadir tarjeta"
         >
           <Plus className="w-4 h-4" />
@@ -77,7 +78,7 @@ export function KanbanColumn({
       )}
 
       {/* Lista de tarjetas sortable con espaciado para insignias y sombras flotantes */}
-      <div ref={setNodeRef} className="flex-1 overflow-y-auto px-2 pt-3.5 pb-3 min-h-[120px]">
+      <div ref={setNodeRef} className="flex-1 overflow-y-auto px-1 sm:px-2 pt-3.5 pb-3 min-h-[120px]">
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
           {cards.map(card => (
             <KanbanCard

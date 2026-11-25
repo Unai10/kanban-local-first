@@ -73,7 +73,7 @@ export function BoardSidebar({
     >
       <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={onClose} />
 
-      <div className="relative w-80 bg-slate-950 border-r border-slate-800 h-full p-5 flex flex-col z-50 shadow-2xl">
+      <div className="relative w-[85vw] max-w-80 bg-slate-950 border-r border-slate-800 h-full p-4 sm:p-5 flex flex-col z-50 shadow-2xl">
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <Kanban className="w-5 h-5 text-primary" />
@@ -198,7 +198,7 @@ export function BoardSidebar({
                               setDraftTitle(board.title);
                               setEditingBoardId(board.id);
                             }}
-                            className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 text-slate-500 hover:text-blue-400 p-1 transition"
+                            className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 text-slate-500 hover:text-blue-400 p-1.5 transition"
                             title="Cambiar nombre del tablero"
                             aria-label={`Renombrar tablero ${board.title}`}
                           >
@@ -213,7 +213,7 @@ export function BoardSidebar({
                                   onDeleteBoard(board.id);
                                 }
                               }}
-                              className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 text-slate-500 hover:text-red-400 p-1 transition"
+                              className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 text-slate-500 hover:text-red-400 p-1.5 transition"
                               title="Eliminar tablero definitivamente"
                               aria-label={`Eliminar tablero ${board.title}`}
                             >

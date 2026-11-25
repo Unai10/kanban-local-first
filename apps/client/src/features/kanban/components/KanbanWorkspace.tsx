@@ -66,7 +66,7 @@ export function KanbanWorkspace() {
   } = useKanbanDnd({ cards, columns, moveCard, onUpdateActivity: updateActivity });
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-dvh bg-background flex flex-col">
       <BoardHeaderContainer
         collaborators={collaborators}
         syncStatus={syncStatus}
@@ -75,7 +75,7 @@ export function KanbanWorkspace() {
       {notification && (
         <div
           role="alert"
-          className="bg-amber-500/20 border-b border-amber-500/40 text-amber-200 px-6 py-2.5 text-xs flex items-center justify-between animate-in fade-in"
+          className="bg-amber-500/20 border-b border-amber-500/40 text-amber-200 px-3 sm:px-6 py-2 sm:py-2.5 text-xs flex items-center justify-between gap-2 animate-in fade-in"
         >
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />

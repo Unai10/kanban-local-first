@@ -3,7 +3,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
   type DragOverEvent,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
@@ -60,8 +60,8 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
   }, []);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } })
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } })
   );
 
   const cleanup = useCallback(() => {

@@ -303,7 +303,7 @@ export function CardRichFieldsEditor({
               }
             }}
             placeholder={assignee ? `Actual: ${assignee.name} (o escribe otro nombre...)` : 'O escribe un responsable manualmente...'}
-            className="flex-1 bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
           />
           <button
             type="button"
@@ -369,7 +369,7 @@ export function CardRichFieldsEditor({
               }
             }}
             placeholder="Añadir subtarea..."
-            className="flex-1 bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
           />
           <button
             type="button"
@@ -430,7 +430,7 @@ export function CardRichFieldsEditor({
             ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
           <input
             type="text"
             maxLength={LIMITS.LABEL_NAME_MAX}
@@ -443,7 +443,7 @@ export function CardRichFieldsEditor({
               }
             }}
             placeholder="Nueva etiqueta personalizada..."
-            className="flex-1 bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+            className="flex-1 min-w-[160px] bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-primary"
           />
           <div className="flex items-center gap-1">
             {AVATAR_COLORS.slice(0, 5).map(c => (

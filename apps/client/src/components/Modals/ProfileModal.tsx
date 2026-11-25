@@ -40,7 +40,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
       aria-labelledby="profile-modal-title"
     >
       <div
-        className="bg-surface border border-border w-full max-w-sm rounded-xl shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-150"
+        className="bg-surface border border-border w-full max-w-sm max-h-[92dvh] overflow-y-auto rounded-xl shadow-2xl p-4 sm:p-6 relative animate-in fade-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
         <button

@@ -110,24 +110,24 @@ export function KanbanCardView({
       {...attributes}
       {...listeners}
       onClick={() => onClick(card)}
-      className={`bg-surface hover:bg-surfaceHover border border-border p-3 rounded-lg shadow-sm mb-3 group transition-colors duration-150 relative overflow-visible select-none ${
+      className={`bg-surface hover:bg-surfaceHover border border-border p-3 rounded-lg shadow-sm mb-3 group transition-colors duration-150 relative overflow-visible select-none touch-callout-none ${
         isOverlay ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing hover:border-slate-600'
       }`}
     >
       {activeCollaborator && !isOverlay && (
         <div
           style={{ backgroundColor: activeCollaborator.avatarColor }}
-          className="absolute -top-2.5 right-3 px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow-lg border border-black/25 flex items-center gap-1.5 z-20 animate-pulse tracking-tight whitespace-nowrap"
+          className="absolute -top-2.5 right-3 max-w-[calc(100%-1.5rem)] px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow-lg border border-black/25 flex items-center gap-1.5 z-20 animate-pulse tracking-tight whitespace-nowrap"
         >
-          <span>{activeCollaborator.userName}</span>
-          <span className="opacity-95 font-normal">
+          <span className="truncate max-w-[140px]">{activeCollaborator.userName}</span>
+          <span className="opacity-95 font-normal shrink-0">
             ({activeCollaborator.activity?.action === 'editing-card' ? 'editando' : 'arrastrando'})
           </span>
         </div>
       )}
 
       {(priorityMeta || card.storyPoints != null) && (
-        <div className="flex items-center justify-between gap-2 mb-1.5 pl-5">
+        <div className="flex items-center justify-between gap-2 mb-1.5 pl-4 sm:pl-5">
           {priorityMeta ? (
             <span
               className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${priorityMeta.className}`}
@@ -148,7 +148,7 @@ export function KanbanCardView({
 
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <GripVertical className="w-3.5 h-3.5 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+          <GripVertical className="w-3.5 h-3.5 text-slate-500 opacity-50 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0" />
           <h4 className="font-medium text-sm text-slate-100 truncate">{card.title}</h4>
         </div>
         {!isOverlay && (
@@ -160,7 +160,7 @@ export function KanbanCardView({
               onDelete(card.id);
             }}
             aria-label="Eliminar tarjeta"
-            className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors opacity-70 sm:opacity-0 sm:group-hover:opacity-100 flex-shrink-0"
+            className="text-slate-500 hover:text-red-400 p-1.5 -m-0.5 sm:p-1 sm:m-0 rounded transition-colors opacity-70 sm:opacity-0 sm:group-hover:opacity-100 flex-shrink-0"
             title="Eliminar tarjeta"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -169,13 +169,13 @@ export function KanbanCardView({
       </div>
 
       {card.description && (
-        <p className="text-xs text-slate-400 mt-1 line-clamp-2 mb-2 pl-5 font-normal">
+        <p className="text-xs text-slate-400 mt-1 line-clamp-2 mb-2 pl-4 sm:pl-5 font-normal">
           {card.description}
         </p>
       )}
 
       {card.labels && card.labels.length > 0 && (
-        <div className="flex flex-wrap gap-1 pl-5 mb-2">
+        <div className="flex flex-wrap gap-1 pl-4 sm:pl-5 mb-2">
           {card.labels.map(label => (
             <span
               key={label.id}
@@ -194,7 +194,7 @@ export function KanbanCardView({
       )}
 
       {checklist.length > 0 && (
-        <div className="pl-5 mb-2">
+        <div className="pl-4 sm:pl-5 mb-2">
           <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
             <span className="inline-flex items-center gap-1">
               <CheckSquare className="w-3 h-3 text-emerald-400" />
@@ -215,7 +215,7 @@ export function KanbanCardView({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 pl-5 text-[10px] text-slate-500 mt-1">
+      <div className="flex items-center justify-between gap-2 pl-4 sm:pl-5 text-[10px] text-slate-500 mt-1">
         <div className="flex items-center gap-1.5 min-w-0">
           {dueMeta ? (
             <span
