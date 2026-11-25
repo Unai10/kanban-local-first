@@ -2,6 +2,7 @@ node_modules
 .git
 .gitignore
 docs
+assets
 README.md
 apps/server/data
 apps/client/dev-dist
