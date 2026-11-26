@@ -13,6 +13,7 @@ import { UndoToast } from '../../../components/UndoToast.js';
 import { RolesModal } from '../../../components/Modals/RolesModal.js';
 import { BoardMetricsModal } from '../../../components/Modals/BoardMetricsModal.js';
 import { ShortcutsHelpModal } from '../../../components/Modals/ShortcutsHelpModal.js';
+import { OnboardingTour } from '../../../components/OnboardingTour.js';
 import { downloadBoardAsJson, downloadBoardAsMarkdown } from '../../../core/utils/boardExport.js';
 
 export function KanbanWorkspace() {
@@ -29,10 +30,14 @@ export function KanbanWorkspace() {
     isRolesModalOpen,
     isMetricsModalOpen,
     isShortcutsModalOpen,
+    isOnboardingOpen,
+    openSidebar,
+    closeSidebar,
     closeRolesModal,
     closeMetricsModal,
     openShortcutsModal,
     closeShortcutsModal,
+    completeOnboarding,
     updateMemberRole,
     handleRemoteBoardDeleted,
     handleAuthError,
@@ -162,6 +167,19 @@ export function KanbanWorkspace() {
     updateActivity(null);
   }, [updateActivity]);
 
+  const handleCreateCard = useCallback((
+    columnId: string,
+    title: string,
+    description: string,
+    labels?: Parameters<typeof addCard>[3],
+    extras?: Parameters<typeof addCard>[4]
+  ) => {
+    addCard(columnId, title, description, labels, extras);
+    if (isOnboardingOpen) {
+      completeOnboarding();
+    }
+  }, [addCard, isOnboardingOpen, completeOnboarding]);
+
   const isAnyModalOpen = Boolean(
     editingCard ||
     createCardColumnId !== null ||
@@ -172,7 +190,8 @@ export function KanbanWorkspace() {
     isProfileModalOpen ||
     isRolesModalOpen ||
     isMetricsModalOpen ||
-    isShortcutsModalOpen
+    isShortcutsModalOpen ||
+    isOnboardingOpen
   );
 
   useGlobalShortcuts({
@@ -271,7 +290,7 @@ export function KanbanWorkspace() {
         handleDragOver={handleDragOver}
         handleDragEnd={handleDragEnd}
         handleDragCancel={handleDragCancel}
-        addCard={addCard}
+        addCard={handleCreateCard}
         deleteCard={handleDeleteCardWithUndo}
         updateCard={updateCard}
         addColumn={addColumn}
@@ -281,6 +300,7 @@ export function KanbanWorkspace() {
         addComment={addComment}
         deleteComment={deleteComment}
         createCardColumnId={createCardColumnId}
+        isCreateCardTutorialHighlight={isOnboardingOpen && createCardColumnId !== null}
         onOpenCreateCard={handleOpenCreateCard}
         onCloseCreateCard={handleCloseCreateCard}
         editingCard={editingCard}
@@ -326,6 +346,20 @@ export function KanbanWorkspace() {
       <ShortcutsHelpModal
         isOpen={isShortcutsModalOpen}
         onClose={closeShortcutsModal}
+      />
+
+      <OnboardingTour
+        isOpen={isOnboardingOpen}
+        isSidebarOpen={isSidebarOpen}
+        isCreateCardModalOpen={createCardColumnId !== null}
+        isPausedBySubModal={isCreateBoardModalOpen || isJoinModalOpen || isProfileModalOpen}
+        onOpenSidebar={openSidebar}
+        onCloseSidebar={closeSidebar}
+        onOpenFirstCardModal={() => {
+          if (columns[0]) handleOpenCreateCard(columns[0].id);
+        }}
+        onCloseCreateCardModal={handleCloseCreateCard}
+        onComplete={completeOnboarding}
       />
 
       <UndoToast

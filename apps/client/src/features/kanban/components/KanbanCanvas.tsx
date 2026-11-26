@@ -68,6 +68,7 @@ interface Props {
   addComment: (cardId: string, text: string) => void;
   deleteComment: (commentId: string) => void;
   createCardColumnId: string | null;
+  isCreateCardTutorialHighlight?: boolean;
   onOpenCreateCard: (colId: string) => void;
   onCloseCreateCard: () => void;
   editingCard: Card | null;
@@ -104,6 +105,7 @@ export function KanbanCanvas({
   addComment,
   deleteComment,
   createCardColumnId,
+  isCreateCardTutorialHighlight = false,
   onOpenCreateCard,
   onCloseCreateCard,
   editingCard,
@@ -418,6 +420,7 @@ export function KanbanCanvas({
 
       <CreateCardModal
         isOpen={createCardColumnId !== null}
+        isTutorialHighlight={isCreateCardTutorialHighlight}
         columns={columns}
         defaultColumnId={createCardColumnId || columns[0]?.id || ''}
         collaborators={collaborators}

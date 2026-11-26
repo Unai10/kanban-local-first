@@ -247,6 +247,7 @@ export function KanbanColumn({
               )}
               <button
                 type="button"
+                data-tour={isFirstColumn ? 'add-card-btn' : undefined}
                 onClick={() => onOpenCreateCard(column.id)}
                 aria-label={`Añadir tarjeta a ${column.title}`}
                 className="text-slate-400 hover:text-ink p-1.5 sm:p-1 hover:bg-slate-800 rounded transition"

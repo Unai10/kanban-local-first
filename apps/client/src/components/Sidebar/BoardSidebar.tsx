@@ -7,11 +7,12 @@ import {
   type UserBoardEntry,
   type UserProfile,
 } from '@kanban/shared-types';
-import { X, Kanban, Plus, Trash2, UserCheck, LogOut, LogIn, Pencil, Check, Upload, Download, FileText } from 'lucide-react';
+import { X, Kanban, Plus, Trash2, UserCheck, LogOut, LogIn, Pencil, Check, Upload, Download, FileText, HelpCircle } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  isTutorialHighlight?: boolean;
   boards: UserBoardEntry[];
   currentBoardId: string;
   currentUser: UserProfile;
@@ -19,6 +20,7 @@ interface Props {
   onOpenCreateModal: () => void;
   onOpenJoinModal: () => void;
   onOpenProfileModal: () => void;
+  onOpenOnboarding?: () => void;
   onRenameBoard: (boardId: string, newTitle: string) => void;
   onDeleteBoard: (boardId: string) => void;
   onLeaveBoard: (boardId: string) => void;
@@ -30,6 +32,7 @@ interface Props {
 export function BoardSidebar({
   isOpen,
   onClose,
+  isTutorialHighlight = false,
   boards,
   currentBoardId,
   currentUser,
@@ -37,6 +40,7 @@ export function BoardSidebar({
   onOpenCreateModal,
   onOpenJoinModal,
   onOpenProfileModal,
+  onOpenOnboarding,
   onRenameBoard,
   onDeleteBoard,
   onLeaveBoard,
@@ -115,7 +119,20 @@ export function BoardSidebar({
     >
       <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={onClose} />
 
-      <div className="relative w-[85vw] max-w-80 bg-slate-950 border-r border-slate-800 h-full p-4 sm:p-5 flex flex-col z-50 shadow-2xl">
+      <div
+        data-tour="sidebar-panel"
+        className={`relative w-[85vw] max-w-80 bg-slate-950 border-r h-full p-4 sm:p-5 flex flex-col z-50 shadow-2xl transition-all ${
+          isTutorialHighlight
+            ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-slate-950'
+            : 'border-slate-800'
+        }`}
+      >
+        {isTutorialHighlight && (
+          <div className="mb-3 px-2.5 py-1.5 rounded-lg bg-primary/15 border border-primary/40 text-[11px] font-medium text-blue-700 dark:text-blue-200 flex items-center justify-between gap-2">
+            <span>Menú interactuable</span>
+            <span className="text-[10px] opacity-80">Puedes explorar y probar opciones</span>
+          </div>
+        )}
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <Kanban className="w-5 h-5 text-primary" />
@@ -408,13 +425,27 @@ export function BoardSidebar({
           </div>
         )}
 
+        {onOpenOnboarding && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenOnboarding();
+            }}
+            className="mt-2 flex items-center justify-center gap-1.5 w-full py-1.5 px-2 bg-slate-900/70 hover:bg-slate-800 border border-slate-800 rounded-lg text-[11px] text-slate-300 hover:text-ink transition"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-primary" />
+            <span>Ver tutorial de bienvenida</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => {
             onClose();
             onOpenProfileModal();
           }}
-          className="mt-3 pt-3 border-t border-slate-800 flex items-center gap-2.5 w-full text-left hover:bg-slate-900 p-2 rounded-lg transition"
+          className="mt-2 pt-3 border-t border-slate-800 flex items-center gap-2.5 w-full text-left hover:bg-slate-900 p-2 rounded-lg transition"
         >
           <span
             className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"

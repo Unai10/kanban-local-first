@@ -20,6 +20,7 @@ export function BoardModalsContainer({ onExportJson, onExportMarkdown }: Props) 
     isCreateBoardModalOpen,
     isJoinModalOpen,
     isProfileModalOpen,
+    isOnboardingOpen,
     closeSidebar,
     closeShareModal,
     closeCreateBoardModal,
@@ -28,6 +29,7 @@ export function BoardModalsContainer({ onExportJson, onExportMarkdown }: Props) 
     openCreateBoardModal,
     openJoinModal,
     openProfileModal,
+    openOnboarding,
     updateUserProfile,
     selectBoard,
     createBoard,
@@ -42,6 +44,7 @@ export function BoardModalsContainer({ onExportJson, onExportMarkdown }: Props) 
     <>
       <BoardSidebar
         isOpen={isSidebarOpen}
+        isTutorialHighlight={isOnboardingOpen && isSidebarOpen}
         onClose={closeSidebar}
         boards={boards}
         currentBoardId={boardInfo.boardId}
@@ -50,6 +53,7 @@ export function BoardModalsContainer({ onExportJson, onExportMarkdown }: Props) 
         onOpenCreateModal={openCreateBoardModal}
         onOpenJoinModal={openJoinModal}
         onOpenProfileModal={openProfileModal}
+        onOpenOnboarding={openOnboarding}
         onRenameBoard={(id, newTitle) => void renameBoard(id, newTitle)}
         onDeleteBoard={deleteBoard}
         onLeaveBoard={leaveBoard}

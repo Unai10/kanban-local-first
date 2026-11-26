@@ -16,6 +16,7 @@ export function SyncBadge({ status }: Props) {
 
   return (
     <div
+      data-tour="sync-badge"
       title={label}
       aria-label={`Estado de sincronización: ${label}`}
       className="flex items-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-1 rounded-full text-xs font-medium border bg-slate-900/80 border-slate-800"

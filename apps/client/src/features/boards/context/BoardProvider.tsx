@@ -22,6 +22,7 @@ import {
   type InitialBoardResolution,
 } from '../../../core/storage/localBoardRepository.js';
 import { AVATAR_COLORS, LocalUserRepository } from '../../../core/storage/localUserRepository.js';
+import { isOnboardingCompleted, markOnboardingCompleted } from '../../../core/constants/onboarding.js';
 import { deleteBoardIndexedDb } from '../../../core/yjs/YjsRoomClient.js';
 import { APP_CONFIG } from '../../../core/config/env.js';
 import { BoardContext, type AppTheme, type BoardContextValue } from './BoardContext.js';
@@ -132,7 +133,17 @@ export function BoardProvider({ children }: { children: ReactNode }) {
   const [isRolesModalOpen, setIsRolesModalOpen] = useState(false);
   const [isMetricsModalOpen, setIsMetricsModalOpen] = useState(false);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(() => !isOnboardingCompleted());
   const [notification, setNotification] = useState<string | null>(null);
+
+  const openOnboarding = useCallback(() => {
+    setIsOnboardingOpen(true);
+  }, []);
+
+  const completeOnboarding = useCallback(() => {
+    markOnboardingCompleted();
+    setIsOnboardingOpen(false);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -872,6 +883,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     isRolesModalOpen,
     isMetricsModalOpen,
     isShortcutsModalOpen,
+    isOnboardingOpen,
     notification,
     dismissNotification,
     openSidebar,
@@ -890,6 +902,8 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     closeMetricsModal: () => setIsMetricsModalOpen(false),
     openShortcutsModal: () => setIsShortcutsModalOpen(true),
     closeShortcutsModal: () => setIsShortcutsModalOpen(false),
+    openOnboarding,
+    completeOnboarding,
     updateUserProfile,
     selectBoard,
     createBoard,

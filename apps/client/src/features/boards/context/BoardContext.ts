@@ -25,6 +25,7 @@ export interface BoardContextValue {
   isRolesModalOpen: boolean;
   isMetricsModalOpen: boolean;
   isShortcutsModalOpen: boolean;
+  isOnboardingOpen: boolean;
   notification: string | null;
   dismissNotification: () => void;
   openSidebar: () => void;
@@ -43,6 +44,8 @@ export interface BoardContextValue {
   closeMetricsModal: () => void;
   openShortcutsModal: () => void;
   closeShortcutsModal: () => void;
+  openOnboarding: () => void;
+  completeOnboarding: () => void;
   updateUserProfile: (name: string, color: string) => void;
   selectBoard: (newBoardId: string, token: string) => void;
   createBoard: (title: string, templateId?: BoardTemplateId) => void;

@@ -16,6 +16,7 @@ import { CardRichFieldsEditor } from './CardRichFieldsEditor.js';
 
 interface Props {
   isOpen: boolean;
+  isTutorialHighlight?: boolean;
   columns: Column[];
   defaultColumnId: string;
   collaborators: UserPresence[];
@@ -32,6 +33,7 @@ interface Props {
 }
 
 interface ContentProps {
+  isTutorialHighlight?: boolean;
   columns: Column[];
   defaultColumnId: string;
   collaborators: UserPresence[];
@@ -42,6 +44,7 @@ interface ContentProps {
 }
 
 function CreateCardModalContent({
+  isTutorialHighlight = false,
   columns,
   defaultColumnId,
   collaborators,
@@ -106,7 +109,12 @@ function CreateCardModalContent({
       aria-labelledby="create-card-modal-title"
     >
       <div
-        className="bg-surface border border-border w-full max-w-xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-xl shadow-2xl relative animate-in fade-in zoom-in-95 duration-150"
+        data-tour="create-card-modal"
+        className={`bg-surface w-full max-w-xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-xl shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 ${
+          isTutorialHighlight
+            ? 'border-2 border-primary ring-4 ring-primary/25'
+            : 'border border-border'
+        }`}
         onClick={e => e.stopPropagation()}
       >
         <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4 border-b border-border/80 bg-surface">
@@ -225,6 +233,7 @@ function CreateCardModalContent({
 
 export function CreateCardModal({
   isOpen,
+  isTutorialHighlight = false,
   columns,
   defaultColumnId,
   collaborators,
@@ -237,6 +246,7 @@ export function CreateCardModal({
 
   return (
     <CreateCardModalContent
+      isTutorialHighlight={isTutorialHighlight}
       columns={columns}
       defaultColumnId={defaultColumnId}
       collaborators={collaborators}

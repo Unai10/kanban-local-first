@@ -140,6 +140,7 @@ export function Header({
       <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
         <button
           type="button"
+          data-tour="sidebar-btn"
           onClick={onOpenSidebar}
           aria-label="Ver tableros"
           className="p-1.5 rounded-lg text-slate-400 hover:text-ink hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors shrink-0"
@@ -183,9 +184,10 @@ export function Header({
         </div>
       </div>
 
-      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+      <div data-tour="header-tools-bar" className="flex items-center gap-1 sm:gap-2 shrink-0">
         <button
           type="button"
+          data-tour="metrics-btn"
           onClick={onOpenMetricsModal}
           aria-label="Resumen y métricas del tablero"
           title="Resumen y métricas"
@@ -197,6 +199,7 @@ export function Header({
 
         <button
           type="button"
+          data-tour="roles-btn"
           onClick={onOpenRolesModal}
           aria-label="Miembros y roles"
           title={role === 'owner' ? 'Gestionar roles de miembros' : 'Ver miembros y roles'}
@@ -208,6 +211,7 @@ export function Header({
 
         <button
           type="button"
+          data-tour="share-btn"
           onClick={onOpenShareModal}
           aria-label="Compartir tablero"
           className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-medium border border-primary/20 transition-colors"
@@ -219,6 +223,7 @@ export function Header({
 
         <button
           type="button"
+          data-tour="theme-btn"
           onClick={onToggleTheme}
           aria-label={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
           title={theme === 'dark' ? 'Tema claro' : 'Tema oscuro'}

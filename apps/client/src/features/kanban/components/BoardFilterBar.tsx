@@ -43,6 +43,7 @@ export function BoardFilterBar({
 
   return (
     <section
+      data-tour="filter-bar"
       aria-label="Buscador y filtros del tablero"
       className="border-b border-border bg-surface/40 px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2"
     >

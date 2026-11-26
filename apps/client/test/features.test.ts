@@ -4,6 +4,12 @@ import type { Card, Column } from '@kanban/shared-types';
 import { filterCards, INITIAL_BOARD_FILTERS } from '../src/features/kanban/hooks/useBoardFilters.ts';
 import { computeBoardMetrics } from '../src/components/Modals/BoardMetricsModal.tsx';
 import { boardSnapshotToMarkdown } from '../src/core/utils/boardExport.ts';
+import {
+  ONBOARDING_COMPLETED_KEY,
+  ONBOARDING_STEPS,
+  isOnboardingCompleted,
+  markOnboardingCompleted,
+} from '../src/core/constants/onboarding.ts';
 
 const NOW = new Date(2026, 10, 26, 12, 0, 0).getTime();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -111,4 +117,44 @@ test('boardSnapshotToMarkdown - Genera Markdown legible con checklists y comenta
   assert.match(md, /## Por Hacer \(1\)/);
   assert.match(md, /- \[x\] Paso 1/);
   assert.match(md, /\*\*Ana\*\*: Listo para revisar/);
+});
+
+test('Onboarding - Pasos cubren Local-First, sidebar interactivo, barra de cabecera y creación interactiva con campos', () => {
+  assert.equal(ONBOARDING_STEPS.length, 8);
+  assert.match(ONBOARDING_STEPS[0].title, /Local-First/i);
+  assert.ok(ONBOARDING_STEPS[0].highlights && ONBOARDING_STEPS[0].highlights.length > 0);
+
+  const sidebarTrigger = ONBOARDING_STEPS.find(s => s.id === 'sidebar-trigger');
+  const sidebarPanel = ONBOARDING_STEPS.find(s => s.id === 'sidebar-panel');
+  const headerBar = ONBOARDING_STEPS.find(s => s.id === 'header-tools-bar');
+  const addCardBtn = ONBOARDING_STEPS.find(s => s.id === 'create-first-card');
+  const cardFields = ONBOARDING_STEPS.find(s => s.id === 'create-card-fields');
+
+  assert.equal(sidebarTrigger?.targetSelector, '[data-tour="sidebar-btn"]');
+  assert.equal(sidebarTrigger?.allowTargetInteraction, true);
+  assert.equal(sidebarPanel?.targetSelector, '[data-tour="sidebar-panel"]');
+  assert.equal(sidebarPanel?.allowTargetInteraction, true);
+  assert.equal(sidebarPanel?.placement, 'right-of-target');
+  assert.equal(headerBar?.targetSelector, '[data-tour="header-tools-bar"]');
+  assert.equal(addCardBtn?.targetSelector, '[data-tour="add-card-btn"]');
+  assert.equal(addCardBtn?.allowTargetInteraction, true);
+  assert.equal(cardFields?.targetSelector, '[data-tour="create-card-modal"]');
+  assert.equal(cardFields?.allowTargetInteraction, true);
+  assert.equal(cardFields?.placement, 'beside-modal');
+  assert.ok(cardFields?.highlights && cardFields.highlights.length >= 3);
+
+  const store = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: k => store.get(k) ?? null,
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: k => { store.delete(k); },
+    clear: () => { store.clear(); },
+    key: () => null,
+    length: 0,
+  };
+
+  assert.equal(isOnboardingCompleted(), false);
+  markOnboardingCompleted();
+  assert.equal(store.get(ONBOARDING_COMPLETED_KEY), '1');
+  assert.equal(isOnboardingCompleted(), true);
 });
