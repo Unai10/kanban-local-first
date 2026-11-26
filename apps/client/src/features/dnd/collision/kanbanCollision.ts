@@ -2,16 +2,33 @@ import { pointerWithin, closestCenter, type CollisionDetection } from '@dnd-kit/
 
 /**
  * Estrategia de colisión optimizada para tableros Kanban:
- * 1. Filtra la tarjeta activa para evitar auto-colisión.
- * 2. Si el puntero cae sobre una tarjeta, la prioriza frente al fondo de la columna.
- * 3. Si cae en un margen o espacio vacío, calcula closestCenter.
+ * 1. Si se arrastra una columna, colisiona exclusivamente contra otras columnas ordenables.
+ * 2. Si se arrastra con teclado (`pointerCoordinates === null`), usa `closestCenter`.
+ * 3. Si el puntero cae sobre una tarjeta, la prioriza frente al fondo de la columna.
  */
 export const kanbanCollisionDetection: CollisionDetection = (args) => {
+  const activeType = args.active.data.current?.type;
+
+  if (activeType === 'column-sortable') {
+    const columnContainers = args.droppableContainers.filter(
+      container =>
+        container.id !== args.active.id &&
+        container.data.current?.type === 'column-sortable'
+    );
+    return closestCenter({ ...args, droppableContainers: columnContainers });
+  }
+
   const droppableContainers = args.droppableContainers.filter(
-    container => container.id !== args.active.id
+    container =>
+      container.id !== args.active.id &&
+      container.data.current?.type !== 'column-sortable'
   );
 
   const filteredArgs = { ...args, droppableContainers };
+
+  if (!args.pointerCoordinates) {
+    return closestCenter(filteredArgs);
+  }
 
   const pointerCollisions = pointerWithin(filteredArgs);
   if (pointerCollisions.length > 0) {
@@ -30,7 +47,7 @@ export const kanbanCollisionDetection: CollisionDetection = (args) => {
         dc.data.current?.card?.columnId === colCollision.id
     );
 
-    if (colCardContainers.length > 0 && args.pointerCoordinates) {
+    if (colCardContainers.length > 0) {
       const maxCardBottom = Math.max(
         ...colCardContainers.map(dc => dc.rect.current?.bottom ?? -Infinity)
       );

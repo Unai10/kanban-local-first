@@ -311,6 +311,50 @@ export function createServerApp(config: ServerConfig = SERVER_CONFIG): ServerApp
     return res.json({ status: 'ok', board: result.board });
   });
 
+  // Asignación/revocación de rol admin por parte del propietario
+  app.patch('/api/boards/:boardId/roles', (req, res) => {
+    const clientIp = getClientIp(req, config.trustProxy);
+    if (authRateLimiter.isLimited(clientIp)) {
+      return res.status(429).json({ error: 'Demasiados intentos fallidos. Inténtalo más tarde.' });
+    }
+
+    const { boardId } = req.params;
+    if (!ROOM_NAME_REGEX.test(boardId)) {
+      return res.status(400).json({ error: 'Identificador de tablero inválido' });
+    }
+
+    const token = extractBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: 'Token de propietario requerido' });
+    }
+
+    const { userId, role } = req.body ?? {};
+    if (typeof userId !== 'string' || (role !== 'admin' && role !== 'member')) {
+      return res.status(400).json({ error: 'Datos inválidos para actualizar el rol del colaborador' });
+    }
+
+    const result = boardRepo.setBoardMemberRole(boardId, token, userId, role);
+    if (!result.ok) {
+      if (result.reason === 'forbidden') {
+        authRateLimiter.recordFailure(clientIp);
+        return res.status(403).json({ error: 'Solo el propietario puede gestionar roles en este tablero' });
+      }
+      if (result.reason === 'not_found') {
+        authRateLimiter.recordFailure(clientIp);
+        return res.status(404).json({ error: 'Tablero no encontrado' });
+      }
+      return res.status(400).json({ error: 'Usuario o rol inválido' });
+    }
+
+    roomManager.updateMemberRoleInBoard(boardId, result.userId, result.role, result.board);
+    return res.json({
+      status: 'ok',
+      boardId,
+      userId: result.userId,
+      role: result.role,
+    });
+  });
+
   // Abandono explícito de tablero: limpia la asignación de tarjetas del usuario saliente en el Y.Doc
   app.post('/api/boards/:boardId/leave', (req, res) => {
     const clientIp = getClientIp(req, config.trustProxy);
@@ -343,6 +387,7 @@ export function createServerApp(config: ServerConfig = SERVER_CONFIG): ServerApp
       return res.status(403).json({ error: 'No autorizado para operar sobre este tablero' });
     }
 
+    boardRepo.removeBoardMemberRole(boardId, cleanUserId);
     roomManager.removeMemberFromBoard(boardId, cleanUserId);
     return res.json({ status: 'ok', left: true });
   });

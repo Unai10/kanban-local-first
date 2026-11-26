@@ -522,3 +522,392 @@ test('Producción todo-en-uno - Sirve SPA estática, CSP diferenciada y same-hos
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('Integración Roles - Promoción en vivo y descarte de cambios de columnas offline tras degradación', async () => {
+  const { appInstance, baseUrl, wsBaseUrl } = await startTestServer();
+  try {
+    const boardId = 'roles-sync-1';
+    const inviteToken = generateSecureToken();
+    const ownerToken = generateSecureToken();
+
+    await fetch(`${baseUrl}/api/boards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        boardId,
+        title: 'Tablero Roles',
+        inviteToken,
+        ownerToken,
+        ownerId: 'usr-owner',
+        ownerName: 'Jefe',
+      }),
+    });
+
+    // Helper mínimo para sincronizar un Y.Doc con un WebSocket
+    function attachDocSync(ws, ydoc, onBoardMeta) {
+      ws.on('message', data => {
+        const decoder = decoding.createDecoder(new Uint8Array(data));
+        const msgType = decoding.readVarUint(decoder);
+        if (msgType === WS_MESSAGE_TYPE.SYNC) {
+          const reply = encoding.createEncoder();
+          encoding.writeVarUint(reply, WS_MESSAGE_TYPE.SYNC);
+          syncProtocol.readSyncMessage(decoder, reply, ydoc, 'remote-sync');
+          if (encoding.length(reply) > 1) {
+            ws.send(encoding.toUint8Array(reply));
+          }
+        } else if (msgType === WS_MESSAGE_TYPE.BOARD_META) {
+          onBoardMeta?.(JSON.parse(decoding.readVarString(decoder)));
+        }
+      });
+    }
+
+    const ownerDoc = new Y.Doc();
+    const ownerWs = new WebSocket(
+      `${wsBaseUrl}/rooms/${boardId}?userId=usr-owner`,
+      ['yjs-v1', `invite.${inviteToken}`, `owner.${ownerToken}`],
+      { headers: { Origin: 'http://allowed-one.test' } }
+    );
+    ownerWs.on('message', data => {
+      const decoder = decoding.createDecoder(new Uint8Array(data));
+      if (decoding.readVarUint(decoder) === WS_MESSAGE_TYPE.SYNC) {
+        const reply = encoding.createEncoder();
+        encoding.writeVarUint(reply, WS_MESSAGE_TYPE.SYNC);
+        syncProtocol.readSyncMessage(decoder, reply, ownerDoc, 'remote-sync');
+        if (encoding.length(reply) > 1) {
+          ownerWs.send(encoding.toUint8Array(reply));
+        }
+      }
+    });
+    await new Promise(resolve => ownerWs.once('open', resolve));
+    {
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeSyncStep1(step1, ownerDoc);
+      ownerWs.send(encoding.toUint8Array(step1));
+    }
+
+    ownerDoc.on('update', (u, origin) => {
+      if (origin === 'remote-sync') return;
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeUpdate(enc, u);
+      ownerWs.send(encoding.toUint8Array(enc));
+    });
+
+    // Crear columna base como owner
+    ownerDoc.transact(() => {
+      const col = new Y.Map();
+      col.set('id', 'col-1');
+      col.set('title', 'Por Hacer');
+      col.set('orderKey', 'a0');
+      ownerDoc.getMap('columns').set('col-1', col);
+    });
+
+    // Conectar colaborador
+    const collabDoc = new Y.Doc();
+    const collabMetas = [];
+    let collabWs = new WebSocket(
+      `${wsBaseUrl}/rooms/${boardId}?userId=usr-collab`,
+      ['yjs-v1', `invite.${inviteToken}`],
+      { headers: { Origin: 'http://allowed-two.test' } }
+    );
+    attachDocSync(collabWs, collabDoc, meta => collabMetas.push(meta));
+    await new Promise(resolve => collabWs.once('open', resolve));
+    {
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeSyncStep1(step1, collabDoc);
+      collabWs.send(encoding.toUint8Array(step1));
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(collabMetas[0].role, 'member');
+
+    // 1. Un miembro NO puede asignar roles (403)
+    const unauthRoleRes = await fetch(`${baseUrl}/api/boards/${boardId}/roles`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${inviteToken}`,
+      },
+      body: JSON.stringify({ userId: 'usr-collab', role: 'admin' }),
+    });
+    assert.equal(unauthRoleRes.status, 403);
+
+    // 2. Owner asciende a usr-collab a admin y llega BOARD_META en vivo
+    const promoteRes = await fetch(`${baseUrl}/api/boards/${boardId}/roles`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ownerToken}`,
+      },
+      body: JSON.stringify({ userId: 'usr-collab', role: 'admin' }),
+    });
+    assert.equal(promoteRes.status, 200);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(collabMetas.at(-1).role, 'admin');
+
+    // 3. Colaborador desconecta (pasa a offline)
+    const closedPromise = new Promise(resolve => collabWs.once('close', resolve));
+    collabWs.close();
+    await closedPromise;
+
+    // 4. Owner revoca rol admin mientras colaborador está offline
+    const demoteRes = await fetch(`${baseUrl}/api/boards/${boardId}/roles`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ownerToken}`,
+      },
+      body: JSON.stringify({ userId: 'usr-collab', role: 'member' }),
+    });
+    assert.equal(demoteRes.status, 200);
+
+    // 5. Colaborador offline modifica col-1, crea col-unauth y crea una tarjeta válida
+    collabDoc.transact(() => {
+      const col1 = collabDoc.getMap('columns').get('col-1');
+      col1.set('title', 'Hackeada Offline');
+
+      const badCol = new Y.Map();
+      badCol.set('id', 'col-unauth');
+      badCol.set('title', 'Columna Ilegal');
+      badCol.set('orderKey', 'a1');
+      collabDoc.getMap('columns').set('col-unauth', badCol);
+
+      const validCard = new Y.Map();
+      validCard.set('id', 'card-offline-valid');
+      validCard.set('columnId', 'col-unauth');
+      validCard.set('title', 'Tarjeta Válida');
+      collabDoc.getMap('cards').set('card-offline-valid', validCard);
+    });
+
+    // 6. Colaborador reconecta y sincroniza su delta offline
+    const reconnectMetas = [];
+    collabWs = new WebSocket(
+      `${wsBaseUrl}/rooms/${boardId}?userId=usr-collab`,
+      ['yjs-v1', `invite.${inviteToken}`],
+      { headers: { Origin: 'http://allowed-two.test' } }
+    );
+    attachDocSync(collabWs, collabDoc, meta => reconnectMetas.push(meta));
+    await new Promise(resolve => collabWs.once('open', resolve));
+    {
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeSyncStep1(step1, collabDoc);
+      collabWs.send(encoding.toUint8Array(step1));
+    }
+
+    // Enviar estado completo offline hacia el servidor (como hace y-websocket en SyncStep2)
+    const sync2 = encoding.createEncoder();
+    encoding.writeVarUint(sync2, WS_MESSAGE_TYPE.SYNC);
+    syncProtocol.writeUpdate(sync2, Y.encodeStateAsUpdate(collabDoc));
+    collabWs.send(encoding.toUint8Array(sync2));
+
+    await new Promise(resolve => setTimeout(resolve, 120));
+
+    // Verificar que el servidor advirtió columnsReverted y restauró columnas en ambos docs
+    assert.equal(reconnectMetas.some(m => m.role === 'member' && m.columnsReverted === true), true);
+    assert.equal(ownerDoc.getMap('columns').has('col-unauth'), false);
+    assert.equal(ownerDoc.getMap('columns').get('col-1').get('title'), 'Por Hacer');
+    assert.equal(collabDoc.getMap('columns').has('col-unauth'), false);
+    assert.equal(collabDoc.getMap('columns').get('col-1').get('title'), 'Por Hacer');
+
+    // Verificar que la tarjeta válida NO se perdió y fue reubicada a col-1
+    const syncedCard = ownerDoc.getMap('cards').get('card-offline-valid');
+    assert.ok(syncedCard instanceof Y.Map);
+    assert.equal(syncedCard.get('title'), 'Tarjeta Válida');
+    assert.equal(syncedCard.get('columnId'), 'col-1');
+
+    collabWs.close();
+    ownerWs.close();
+  } finally {
+    await appInstance.close();
+  }
+});
+
+test('Integración 3 Usuarios - Comentarios concurrentes offline y convergencia tras borrado de columna', async () => {
+  const { appInstance, baseUrl, wsBaseUrl } = await startTestServer();
+  try {
+    const boardId = 'three-users-offline-1';
+    const inviteToken = generateSecureToken();
+    const ownerToken = generateSecureToken();
+
+    await fetch(`${baseUrl}/api/boards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        boardId,
+        title: 'Tablero 3 Usuarios',
+        inviteToken,
+        ownerToken,
+        ownerId: 'usr-owner',
+        ownerName: 'User1 Owner',
+      }),
+    });
+
+    function connectClient(userId, extraProtocols = []) {
+      const ydoc = new Y.Doc();
+      const ws = new WebSocket(
+        `${wsBaseUrl}/rooms/${boardId}?userId=${encodeURIComponent(userId)}`,
+        ['yjs-v1', `invite.${inviteToken}`, ...extraProtocols],
+        { headers: { Origin: 'http://allowed-one.test' } }
+      );
+      ws.on('message', data => {
+        const decoder = decoding.createDecoder(new Uint8Array(data));
+        if (decoding.readVarUint(decoder) === WS_MESSAGE_TYPE.SYNC) {
+          const reply = encoding.createEncoder();
+          encoding.writeVarUint(reply, WS_MESSAGE_TYPE.SYNC);
+          syncProtocol.readSyncMessage(decoder, reply, ydoc, 'remote-sync');
+          if (encoding.length(reply) > 1 && ws.readyState === WebSocket.OPEN) {
+            ws.send(encoding.toUint8Array(reply));
+          }
+        }
+      });
+      ydoc.on('update', (u, origin) => {
+        if (origin === 'remote-sync' || ws.readyState !== WebSocket.OPEN) return;
+        const enc = encoding.createEncoder();
+        encoding.writeVarUint(enc, WS_MESSAGE_TYPE.SYNC);
+        syncProtocol.writeUpdate(enc, u);
+        ws.send(encoding.toUint8Array(enc));
+      });
+      return { ydoc, ws };
+    }
+
+    const u1 = connectClient('usr-owner', [`owner.${ownerToken}`]);
+    const u2 = connectClient('usr-admin');
+    const u3 = connectClient('usr-member');
+
+    await Promise.all([
+      new Promise(r => u1.ws.once('open', r)),
+      new Promise(r => u2.ws.once('open', r)),
+      new Promise(r => u3.ws.once('open', r)),
+    ]);
+
+    for (const c of [u1, u2, u3]) {
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeSyncStep1(step1, c.ydoc);
+      c.ws.send(encoding.toUint8Array(step1));
+    }
+
+    await fetch(`${baseUrl}/api/boards/${boardId}/roles`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ownerToken}`,
+      },
+      body: JSON.stringify({ userId: 'usr-admin', role: 'admin' }),
+    });
+
+    // Estado base creado por Owner (u1)
+    u1.ydoc.transact(() => {
+      for (const [id, title, key] of [
+        ['col-1', 'Por Hacer', 'a0'],
+        ['col-2', 'En Progreso', 'a1'],
+        ['col-3', 'Terminado', 'a2'],
+      ]) {
+        const col = new Y.Map();
+        col.set('id', id);
+        col.set('title', title);
+        col.set('orderKey', key);
+        u1.ydoc.getMap('columns').set(id, col);
+      }
+      const card = new Y.Map();
+      card.set('id', 'card-shared');
+      card.set('columnId', 'col-1');
+      card.set('title', 'Tarjeta Compartida');
+      u1.ydoc.getMap('cards').set('card-shared', card);
+    });
+
+    await new Promise(r => setTimeout(r, 120));
+
+    // Desconectar u1 (Owner) y u3 (Member) simultáneamente para comentar offline
+    await Promise.all([
+      new Promise(r => {
+        u1.ws.once('close', r);
+        u1.ws.close();
+      }),
+      new Promise(r => {
+        u3.ws.once('close', r);
+        u3.ws.close();
+      }),
+    ]);
+
+    // Ambos comentan offline sobre card-shared; u3 también crea tarjeta offline en col-2
+    u1.ydoc.transact(() => {
+      const cm1 = new Y.Map();
+      cm1.set('id', 'cmt-u1');
+      cm1.set('cardId', 'card-shared');
+      cm1.set('authorId', 'usr-owner');
+      cm1.set('text', 'Comentario offline Owner');
+      cm1.set('createdAt', 1000);
+      u1.ydoc.getMap('comments').set('cmt-u1', cm1);
+    });
+    u3.ydoc.transact(() => {
+      const cm3 = new Y.Map();
+      cm3.set('id', 'cmt-u3');
+      cm3.set('cardId', 'card-shared');
+      cm3.set('authorId', 'usr-member');
+      cm3.set('text', 'Comentario offline Member');
+      cm3.set('createdAt', 1001);
+      u3.ydoc.getMap('comments').set('cmt-u3', cm3);
+
+      const cOffline = new Y.Map();
+      cOffline.set('id', 'card-u3-col2');
+      cOffline.set('columnId', 'col-2');
+      cOffline.set('title', 'Card en col-2');
+      u3.ydoc.getMap('cards').set('card-u3-col2', cOffline);
+    });
+
+    // Mientras tanto, u2 (Admin) sigue online y elimina col-2 reubicando hacia col-3
+    u2.ydoc.transact(() => {
+      const col2 = u2.ydoc.getMap('columns').get('col-2');
+      col2.set('deleted', true);
+      col2.set('deletedTargetColumnId', 'col-3');
+    });
+
+    await new Promise(r => setTimeout(r, 80));
+
+    // Reconectar u1 y u3 con su estado offline
+    const u1Re = connectClient('usr-owner', [`owner.${ownerToken}`]);
+    const u3Re = connectClient('usr-member');
+    await Promise.all([
+      new Promise(r => u1Re.ws.once('open', r)),
+      new Promise(r => u3Re.ws.once('open', r)),
+    ]);
+
+    for (const [re, orig] of [
+      [u1Re, u1],
+      [u3Re, u3],
+    ]) {
+      Y.applyUpdate(re.ydoc, Y.encodeStateAsUpdate(orig.ydoc), 'remote-sync');
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeSyncStep1(step1, re.ydoc);
+      re.ws.send(encoding.toUint8Array(step1));
+
+      const syncUpd = encoding.createEncoder();
+      encoding.writeVarUint(syncUpd, WS_MESSAGE_TYPE.SYNC);
+      syncProtocol.writeUpdate(syncUpd, Y.encodeStateAsUpdate(re.ydoc));
+      re.ws.send(encoding.toUint8Array(syncUpd));
+    }
+
+    await new Promise(r => setTimeout(r, 150));
+
+    // Los 3 usuarios tienen ambos comentarios y la columna col-2 eliminada con deletedTargetColumnId = col-3
+    for (const client of [u1Re, u2, u3Re]) {
+      assert.equal(client.ydoc.getMap('comments').has('cmt-u1'), true);
+      assert.equal(client.ydoc.getMap('comments').has('cmt-u3'), true);
+      assert.equal(client.ydoc.getMap('cards').has('card-u3-col2'), true);
+      const col2 = client.ydoc.getMap('columns').get('col-2');
+      assert.equal(col2.get('deleted'), true);
+      assert.equal(col2.get('deletedTargetColumnId'), 'col-3');
+    }
+
+    u1Re.ws.close();
+    u2.ws.close();
+    u3Re.ws.close();
+  } finally {
+    await appInstance.close();
+  }
+});

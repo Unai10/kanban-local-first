@@ -1,3 +1,4 @@
+import type { BoardRole } from '../protocol.js';
 import type { UUID } from './card.js';
 
 /** Columna de un tablero Kanban ordenada mediante clave fraccionaria. */
@@ -8,6 +9,10 @@ export interface Column {
   orderKey: string;
   color?: string;
   createdAt: number;
+  updatedAt?: number;
+  deleted?: boolean;
+  deletedAt?: number | null;
+  deletedTargetColumnId?: string | null;
 }
 
 /** Posición del cursor remoto relativa al lienzo scrollable del tablero. */
@@ -17,7 +22,7 @@ export interface CursorPosition {
 }
 
 /** Tipo de actividad efímera mostrada en tarjetas/columnas mediante Awareness. */
-export type UserActionType = 'editing-card' | 'creating-card' | 'dragging-card';
+export type UserActionType = 'editing-card' | 'creating-card' | 'dragging-card' | 'dragging-column';
 
 /** Detalle de la acción en curso de un colaborador. */
 export interface UserActivity {
@@ -38,12 +43,13 @@ export interface UserPresence {
 
 /**
  * Miembro persistido en el Y.Doc del tablero para mantener nombres/colores
- * actualizados en asignaciones de tarjetas y registrar abandonos del tablero.
+ * actualizados en asignaciones de tarjetas, rol asignado y registrar abandonos del tablero.
  */
 export interface BoardMember {
   userId: UUID;
   name: string;
   color: string;
+  role?: BoardRole;
   updatedAt: number;
   left?: boolean;
   leftAt?: number | null;

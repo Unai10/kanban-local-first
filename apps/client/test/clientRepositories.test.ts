@@ -151,3 +151,30 @@ test('LocalBoardRepository - Rastrea cambios de título y dueño en tableros no 
   assert.equal(otherEntered.previousTitle, undefined);
   assert.equal(otherEntered.previousOwnerName, undefined);
 });
+
+test('LocalBoardRepository - Preserva rol admin localmente y al sincronizar metadatos', async () => {
+  setupBrowserGlobals('http://localhost:5173/');
+  const { LocalBoardRepository } = await import('../src/core/storage/localBoardRepository.ts');
+
+  LocalBoardRepository.saveRegisteredBoard({
+    id: 'board-admin-1',
+    title: 'Tablero Admin',
+    role: 'admin',
+    ownerId: 'usr-owner',
+    ownerName: 'Dueño',
+    inviteToken: 'sec-dddddddddddddddddddddddddddddddd',
+    lastOpenedAt: Date.now(),
+  });
+
+  const saved = LocalBoardRepository.getRegisteredBoards().find(b => b.id === 'board-admin-1');
+  assert.equal(saved?.role, 'admin');
+
+  // Si el propietario degrada a member en servidor, applyRemoteBoardMetadata actualiza el rol
+  LocalBoardRepository.applyRemoteBoardMetadata(
+    [{ boardId: 'board-admin-1', title: 'Tablero Admin', ownerName: 'Dueño', role: 'member' }],
+    'other-board',
+    true
+  );
+  const demoted = LocalBoardRepository.getRegisteredBoards().find(b => b.id === 'board-admin-1');
+  assert.equal(demoted?.role, 'member');
+});

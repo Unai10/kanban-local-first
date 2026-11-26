@@ -1,6 +1,13 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { LIMITS, sanitizeSingleLineText, type UserBoardEntry, type UserProfile } from '@kanban/shared-types';
-import { X, Kanban, Plus, Trash2, UserCheck, LogOut, LogIn, Pencil, Check } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import {
+  LIMITS,
+  sanitizeSingleLineText,
+  validateBoardExportSnapshot,
+  type BoardExportSnapshot,
+  type UserBoardEntry,
+  type UserProfile,
+} from '@kanban/shared-types';
+import { X, Kanban, Plus, Trash2, UserCheck, LogOut, LogIn, Pencil, Check, Upload, Download, FileText } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -15,6 +22,9 @@ interface Props {
   onRenameBoard: (boardId: string, newTitle: string) => void;
   onDeleteBoard: (boardId: string) => void;
   onLeaveBoard: (boardId: string) => void;
+  onImportSnapshot?: (snapshot: BoardExportSnapshot) => void;
+  onExportJson?: () => void;
+  onExportMarkdown?: () => void;
 }
 
 export function BoardSidebar({
@@ -30,9 +40,41 @@ export function BoardSidebar({
   onRenameBoard,
   onDeleteBoard,
   onLeaveBoard,
+  onImportSnapshot,
+  onExportJson,
+  onExportMarkdown,
 }: Props) {
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > LIMITS.MAX_IMPORT_BYTES) {
+      setImportError('El archivo supera el tamaño máximo permitido (2 MB).');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result ?? ''));
+        const validated = validateBoardExportSnapshot(parsed);
+        if (!validated) {
+          setImportError('Archivo JSON inválido o incompatible con el formato Kanban.');
+          return;
+        }
+        setImportError(null);
+        onImportSnapshot?.(validated);
+        onClose();
+      } catch {
+        setImportError('No se pudo leer el archivo JSON.');
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -52,7 +94,7 @@ export function BoardSidebar({
   if (!isOpen) return null;
 
   const myBoards = boards.filter(b => b.role === 'owner');
-  const joinedBoards = boards.filter(b => b.role === 'member');
+  const joinedBoards = boards.filter(b => b.role !== 'owner');
 
   const handleRenameSubmit = (e: FormEvent, board: UserBoardEntry) => {
     e.preventDefault();
@@ -77,13 +119,13 @@ export function BoardSidebar({
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <Kanban className="w-5 h-5 text-primary" />
-            <h2 className="font-semibold text-sm text-white">Mis Tableros</h2>
+            <h2 className="font-semibold text-sm text-ink">Mis Tableros</h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Cerrar menú lateral"
-            className="text-slate-400 hover:text-white p-1 rounded-md"
+            className="text-slate-400 hover:text-ink p-1 rounded-md"
           >
             <X className="w-4 h-4" />
           </button>
@@ -113,6 +155,32 @@ export function BoardSidebar({
             <LogIn className="w-4 h-4" />
             <span>Unirse por Código / Enlace</span>
           </button>
+
+          {onImportSnapshot && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={handleImportFile}
+                className="hidden"
+                aria-label="Importar tablero desde archivo JSON"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 w-full py-2 bg-slate-900 text-slate-200 border border-slate-700 rounded-lg hover:bg-slate-800 transition text-xs font-medium"
+              >
+                <Upload className="w-3.5 h-3.5 text-primary" />
+                <span>Importar Tablero (.json)</span>
+              </button>
+              {importError && (
+                <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-2.5 py-1.5">
+                  {importError}
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto pr-1 space-y-6">
@@ -135,7 +203,7 @@ export function BoardSidebar({
                     }}
                     className={`group flex items-center justify-between p-2.5 rounded-lg cursor-pointer text-xs transition ${
                       board.id === currentBoardId
-                        ? 'bg-primary/20 text-white border border-primary/40 font-medium'
+                        ? 'bg-primary/20 text-ink border border-primary/40 font-medium'
                         : 'text-slate-300 hover:bg-slate-900 border border-transparent'
                     }`}
                   >
@@ -152,7 +220,7 @@ export function BoardSidebar({
                           value={draftTitle}
                           onChange={e => setDraftTitle(e.target.value)}
                           aria-label={`Renombrar tablero ${board.title}`}
-                          className="flex-1 min-w-0 bg-slate-900 border border-primary text-white text-xs px-2 py-1 rounded focus:outline-none"
+                          className="flex-1 min-w-0 bg-slate-900 border border-primary text-ink text-xs px-2 py-1 rounded focus:outline-none"
                         />
                         <button
                           type="submit"
@@ -168,7 +236,7 @@ export function BoardSidebar({
                             setEditingBoardId(null);
                           }}
                           aria-label="Cancelar renombrado"
-                          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
+                          className="p-1 text-slate-400 hover:text-ink hover:bg-slate-800 rounded"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
@@ -248,7 +316,7 @@ export function BoardSidebar({
                       }}
                       className={`group flex items-center justify-between p-2.5 rounded-lg cursor-pointer text-xs transition ${
                         board.id === currentBoardId
-                          ? 'bg-primary/20 text-white border border-primary/40 font-medium'
+                          ? 'bg-primary/20 text-ink border border-primary/40 font-medium'
                           : hasUpdates
                           ? 'text-slate-200 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30'
                           : 'text-slate-300 hover:bg-slate-900 border border-transparent'
@@ -257,6 +325,11 @@ export function BoardSidebar({
                       <div className="flex flex-col min-w-0 pr-2 gap-0.5">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="truncate">{board.title}</span>
+                          {board.role === 'admin' && (
+                            <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              Admin
+                            </span>
+                          )}
                           {hasUpdates && (
                             <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
                               Actualizado
@@ -299,13 +372,49 @@ export function BoardSidebar({
           )}
         </div>
 
+        {(onExportJson || onExportMarkdown) && (
+          <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+              Exportar tablero actual
+            </span>
+            <div className="grid grid-cols-2 gap-1.5">
+              {onExportJson && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onExportJson();
+                    onClose();
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-[11px] text-slate-200 transition"
+                >
+                  <Download className="w-3.5 h-3.5 text-primary" />
+                  JSON
+                </button>
+              )}
+              {onExportMarkdown && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onExportMarkdown();
+                    onClose();
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-[11px] text-slate-200 transition"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                  Markdown
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => {
             onClose();
             onOpenProfileModal();
           }}
-          className="mt-4 pt-3 border-t border-slate-800 flex items-center gap-2.5 w-full text-left hover:bg-slate-900 p-2 rounded-lg transition"
+          className="mt-3 pt-3 border-t border-slate-800 flex items-center gap-2.5 w-full text-left hover:bg-slate-900 p-2 rounded-lg transition"
         >
           <span
             className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"

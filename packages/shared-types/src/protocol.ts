@@ -1,3 +1,9 @@
+/** Roles soportados en un tablero Kanban colaborativo. */
+export type BoardRole = 'owner' | 'admin' | 'member';
+
+/** Roles asignables por el propietario a otros colaboradores. */
+export type AssignableBoardRole = 'admin' | 'member';
+
 /** Códigos de tipo de mensaje binario multiplexados sobre el WebSocket de sala. */
 export const WS_MESSAGE_TYPE = {
   SYNC: 0,
@@ -21,12 +27,14 @@ export interface ServerBoardMetaPayload {
   ownerId: string;
   ownerName: string;
   joinCode?: string;
-  role: 'owner' | 'member';
+  role: BoardRole;
+  columnsReverted?: boolean;
 }
 
 /** Credencial enviada por el cliente para sincronizar metadatos de un tablero del sidebar. */
 export interface BoardMetaSyncRequestItem {
   boardId: string;
+  userId?: string;
   inviteToken?: string;
   ownerToken?: string;
   joinCode?: string;
@@ -39,6 +47,6 @@ export interface BoardMetaSyncItem {
   ownerId?: string;
   ownerName?: string;
   joinCode?: string;
-  role?: 'owner' | 'member';
+  role?: BoardRole;
   deleted?: boolean;
 }

@@ -2,10 +2,11 @@ import { useMemo, type CSSProperties, type HTMLAttributes } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Card, CardPriority, UserPresence } from '@kanban/shared-types';
-import { Trash2, GripVertical, Tag, Calendar, CheckSquare, Flag } from 'lucide-react';
+import { Trash2, GripVertical, Tag, Calendar, CheckSquare, Flag, MessageSquare } from 'lucide-react';
 
 interface CardProps {
   card: Card;
+  commentsCount?: number;
   onDelete: (id: string) => void;
   onClick: (card: Card) => void;
   collaborators?: UserPresence[];
@@ -71,6 +72,7 @@ function formatDueDateBadge(dueDate: number): { label: string; className: string
  */
 export function KanbanCardView({
   card,
+  commentsCount = 0,
   onDelete,
   onClick,
   collaborators,
@@ -180,11 +182,12 @@ export function KanbanCardView({
             <span
               key={label.id}
               style={{
+                ['--label-color' as string]: label.color,
                 backgroundColor: `${label.color}25`,
                 color: label.color,
                 borderColor: `${label.color}40`,
               }}
-              className="text-[10px] px-1.5 py-0.5 rounded border font-medium flex items-center gap-1"
+              className="kanban-label-chip text-[10px] px-1.5 py-0.5 rounded border font-medium flex items-center gap-1"
             >
               <Tag className="w-2.5 h-2.5" />
               {label.name}
@@ -227,6 +230,15 @@ export function KanbanCardView({
           ) : (
             <span className="font-mono">#{card.id.substring(0, 6)}</span>
           )}
+          {commentsCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 text-slate-300 font-mono"
+              title={`${commentsCount} comentario${commentsCount === 1 ? '' : 's'}`}
+            >
+              <MessageSquare className="w-2.5 h-2.5 text-primary" />
+              {commentsCount}
+            </span>
+          )}
         </div>
 
         {card.assignee ? (
@@ -251,7 +263,7 @@ export function KanbanCardView({
 }
 
 /** Envoltorio sortable de tarjeta Kanban conectado a @dnd-kit/sortable. */
-export function KanbanCard({ card, onDelete, onClick, collaborators, currentUserId }: CardProps) {
+export function KanbanCard({ card, commentsCount, onDelete, onClick, collaborators, currentUserId }: CardProps) {
   const sortableData = useMemo(() => ({ type: 'card', card }), [card]);
   const {
     attributes,
@@ -270,6 +282,7 @@ export function KanbanCard({ card, onDelete, onClick, collaborators, currentUser
   return (
     <KanbanCardView
       card={card}
+      commentsCount={commentsCount}
       onDelete={onDelete}
       onClick={onClick}
       collaborators={collaborators}

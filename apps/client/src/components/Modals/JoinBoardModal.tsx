@@ -120,7 +120,7 @@ export function JoinBoardModal({ isOpen, onClose, onJoin }: Props) {
           onClick={handleClose}
           disabled={isLoading}
           aria-label="Cerrar modal de unirse"
-          className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition disabled:opacity-50"
+          className="absolute top-4 right-4 text-slate-400 hover:text-ink p-1 rounded-lg hover:bg-slate-800 transition disabled:opacity-50"
         >
           <X className="w-5 h-5" />
         </button>
@@ -130,7 +130,7 @@ export function JoinBoardModal({ isOpen, onClose, onJoin }: Props) {
             <LogIn className="w-4 h-4" />
           </div>
           <div>
-            <h3 id="join-board-modal-title" className="text-sm font-semibold text-white">Unirse a un Tablero</h3>
+            <h3 id="join-board-modal-title" className="text-sm font-semibold text-ink">Unirse a un Tablero</h3>
             <p className="text-xs text-slate-400">Introduce el código de sala o el enlace</p>
           </div>
         </div>
@@ -157,7 +157,7 @@ export function JoinBoardModal({ isOpen, onClose, onJoin }: Props) {
               if (error) setError(null);
             }}
             placeholder="Ej: 8K2-9MW o enlace completo..."
-            className="w-full bg-slate-900 border border-slate-700 text-white text-sm px-3 py-2 rounded-lg mb-5 focus:outline-none focus:border-primary font-mono disabled:opacity-60"
+            className="w-full bg-slate-900 border border-slate-700 text-ink text-sm px-3 py-2 rounded-lg mb-5 focus:outline-none focus:border-primary font-mono disabled:opacity-60"
           />
 
           <div className="flex items-center justify-end gap-2">
@@ -165,7 +165,7 @@ export function JoinBoardModal({ isOpen, onClose, onJoin }: Props) {
               type="button"
               disabled={isLoading}
               onClick={handleClose}
-              className="text-xs text-slate-400 hover:text-white px-3 py-1.5 disabled:opacity-50"
+              className="text-xs text-slate-400 hover:text-ink px-3 py-1.5 disabled:opacity-50"
             >
               Cancelar
             </button>

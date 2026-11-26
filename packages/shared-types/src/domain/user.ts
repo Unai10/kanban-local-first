@@ -1,3 +1,4 @@
+import type { BoardRole } from '../protocol.js';
 import type { UUID } from './card.js';
 
 /** Identidad local del usuario almacenada en el navegador. */
@@ -11,7 +12,7 @@ export interface UserProfile {
 export interface UserBoardEntry {
   id: UUID;
   title: string;
-  role: 'owner' | 'member';
+  role: BoardRole;
   ownerId?: string;
   ownerName?: string;
   inviteToken: string;

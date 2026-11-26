@@ -12,6 +12,7 @@ function getActivityDescription(activity?: UserActivity | null): string {
   if (activity.action === 'editing-card') return 'Editando una tarjeta';
   if (activity.action === 'creating-card') return 'Creando una tarjeta';
   if (activity.action === 'dragging-card') return 'Arrastrando una tarjeta';
+  if (activity.action === 'dragging-column') return 'Reordenando una columna';
   return 'En línea';
 }
 
@@ -57,7 +58,7 @@ export function CollaboratorsList({ collaborators, currentUserId }: Props) {
           <Users className="w-3.5 h-3.5 text-slate-400" />
           {hasRemoteActivity && (
             <span
-              className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse ring-2 ring-slate-900"
+              className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse ring-2 ring-surface"
               aria-hidden="true"
             />
           )}
@@ -68,7 +69,7 @@ export function CollaboratorsList({ collaborators, currentUserId }: Props) {
               key={collab.userId}
               title={`${collab.userName} ${collab.userId === currentUserId ? '(Tú)' : ''}`}
               style={{ backgroundColor: collab.avatarColor }}
-              className={`w-5 h-5 rounded-full ring-2 ring-slate-900 flex items-center justify-center text-[9px] font-bold text-white uppercase ${
+              className={`w-5 h-5 rounded-full ring-2 ring-surface flex items-center justify-center text-[9px] font-bold text-white uppercase ${
                 idx >= maxVisibleMobile ? 'hidden sm:flex' : 'flex'
               }`}
             >
@@ -76,7 +77,7 @@ export function CollaboratorsList({ collaborators, currentUserId }: Props) {
             </div>
           ))}
           {visibleMobileOverflow > 0 && (
-            <div className="sm:hidden w-5 h-5 rounded-full ring-2 ring-slate-900 bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-semibold">
+            <div className="sm:hidden w-5 h-5 rounded-full ring-2 ring-surface bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-semibold">
               +{visibleMobileOverflow}
             </div>
           )}

@@ -45,3 +45,32 @@ export interface Card {
   deletedAtEditCount?: number;
   deletedAt?: number | null;
 }
+
+/** Comentario colaborativo asociado a una tarjeta y sincronizado mediante CRDT. */
+export interface CardComment {
+  id: UUID;
+  cardId: UUID;
+  authorId: UUID;
+  authorName: string;
+  authorColor: string;
+  text: string;
+  createdAt: number;
+  deleted?: boolean;
+  deletedAt?: number | null;
+}
+
+/** Formato portátil de exportación e importación de un tablero Kanban. */
+export interface BoardExportSnapshot {
+  version: 1;
+  exportedAt: number;
+  title: string;
+  columns: Array<{
+    id: UUID;
+    title: string;
+    orderKey: string;
+    color?: string;
+    createdAt: number;
+  }>;
+  cards: Array<Omit<Card, 'boardId' | 'deleted' | 'deletedAt' | 'deletedAtEditCount'>>;
+  comments: Array<Omit<CardComment, 'deleted' | 'deletedAt'>>;
+}

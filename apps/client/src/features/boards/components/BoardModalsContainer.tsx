@@ -5,7 +5,12 @@ import { CreateBoardModal } from '../../../components/Modals/CreateBoardModal.js
 import { JoinBoardModal } from '../../../components/Modals/JoinBoardModal.js';
 import { ProfileModal } from '../../../components/Modals/ProfileModal.js';
 
-export function BoardModalsContainer() {
+interface Props {
+  onExportJson?: () => void;
+  onExportMarkdown?: () => void;
+}
+
+export function BoardModalsContainer({ onExportJson, onExportMarkdown }: Props) {
   const {
     boardInfo,
     boards,
@@ -26,6 +31,7 @@ export function BoardModalsContainer() {
     updateUserProfile,
     selectBoard,
     createBoard,
+    importBoardFromSnapshot,
     renameBoard,
     joinBoard,
     deleteBoard,
@@ -47,6 +53,9 @@ export function BoardModalsContainer() {
         onRenameBoard={(id, newTitle) => void renameBoard(id, newTitle)}
         onDeleteBoard={deleteBoard}
         onLeaveBoard={leaveBoard}
+        onImportSnapshot={importBoardFromSnapshot}
+        onExportJson={onExportJson}
+        onExportMarkdown={onExportMarkdown}
       />
 
       <ShareModal

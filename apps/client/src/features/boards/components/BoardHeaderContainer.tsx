@@ -9,7 +9,19 @@ interface Props {
 }
 
 export function BoardHeaderContainer({ collaborators, syncStatus }: Props) {
-  const { boardInfo, currentUser, openSidebar, openShareModal, openProfileModal, renameBoard } = useBoardContext();
+  const {
+    boardInfo,
+    currentUser,
+    theme,
+    toggleTheme,
+    openSidebar,
+    openShareModal,
+    openProfileModal,
+    openRolesModal,
+    openMetricsModal,
+    openShortcutsModal,
+    renameBoard,
+  } = useBoardContext();
 
   return (
     <Header
@@ -20,9 +32,14 @@ export function BoardHeaderContainer({ collaborators, syncStatus }: Props) {
       collaborators={collaborators}
       currentUser={currentUser}
       syncStatus={syncStatus}
+      theme={theme}
+      onToggleTheme={toggleTheme}
       onOpenSidebar={openSidebar}
       onOpenShareModal={openShareModal}
       onOpenProfileModal={openProfileModal}
+      onOpenRolesModal={openRolesModal}
+      onOpenMetricsModal={openMetricsModal}
+      onOpenShortcutsModal={openShortcutsModal}
       onRenameBoard={newTitle => void renameBoard(boardInfo.boardId, newTitle)}
     />
   );

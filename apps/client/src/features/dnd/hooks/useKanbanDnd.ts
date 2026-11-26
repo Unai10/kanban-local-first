@@ -3,42 +3,65 @@ import {
   type DragEndEvent,
   type DragStartEvent,
   type DragOverEvent,
+  KeyboardSensor,
   MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
-import { compareCards, type Card, type Column, type UserActivity } from '@kanban/shared-types';
+import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { compareCards, compareColumns, type Card, type Column, type UserActivity } from '@kanban/shared-types';
 import { kanbanCollisionDetection } from '../collision/kanbanCollision.js';
 
 interface UseKanbanDndParams {
   cards: Card[];
+  visibleCards: Card[];
   columns: Column[];
+  canManageColumns: boolean;
   moveCard: (
     cardId: string,
     targetColId: string,
     prevKey: string | null,
     nextKey: string | null
+  ) => boolean;
+  moveColumn: (
+    columnId: string,
+    prevKey: string | null,
+    nextKey: string | null
   ) => void;
   onUpdateActivity?: (activity: UserActivity | null) => void;
+  onDragAborted?: (reason: string) => void;
 }
 
 /**
- * Hook de Drag & Drop sobre @dnd-kit: gestiona estado optimista durante el arrastre
- * entre columnas y calcula nuevas claves fraccionarias (`orderKey`) al soltar.
+ * Hook de Drag & Drop sobre @dnd-kit: soporta ratón, táctil y teclado, estado optimista
+ * sobre tarjetas visibles y cálculo seguro de `orderKey` sobre la lista completa sin filtrar.
  */
-export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: UseKanbanDndParams) {
+export function useKanbanDnd({
+  cards,
+  visibleCards,
+  columns,
+  canManageColumns,
+  moveCard,
+  moveColumn,
+  onUpdateActivity,
+  onDragAborted,
+}: UseKanbanDndParams) {
   const [activeCard, setActiveCard] = useState<Card | null>(null);
+  const [activeColumn, setActiveColumn] = useState<Column | null>(null);
   const [localCards, setLocalCards] = useState<Card[] | null>(null);
 
-  const displayCards = localCards ?? cards;
+  const displayCards = localCards ?? visibleCards;
 
   const cardsRef = useRef(cards);
+  const visibleCardsRef = useRef(visibleCards);
   const columnsRef = useRef(columns);
+  const canManageColumnsRef = useRef(canManageColumns);
   const localCardsRef = useRef(localCards);
   const moveCardRef = useRef(moveCard);
+  const moveColumnRef = useRef(moveColumn);
   const onUpdateActivityRef = useRef(onUpdateActivity);
+  const onDragAbortedRef = useRef(onDragAborted);
   const lastColumnSwapRef = useRef<{
     fromColId: string;
     toColId: string;
@@ -47,11 +70,15 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
 
   useEffect(() => {
     cardsRef.current = cards;
+    visibleCardsRef.current = visibleCards;
     columnsRef.current = columns;
+    canManageColumnsRef.current = canManageColumns;
     localCardsRef.current = localCards;
     moveCardRef.current = moveCard;
+    moveColumnRef.current = moveColumn;
     onUpdateActivityRef.current = onUpdateActivity;
-  }, [cards, columns, localCards, moveCard, onUpdateActivity]);
+    onDragAbortedRef.current = onDragAborted;
+  }, [cards, visibleCards, columns, canManageColumns, localCards, moveCard, moveColumn, onUpdateActivity, onDragAborted]);
 
   useEffect(() => {
     return () => {
@@ -61,29 +88,70 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   const cleanup = useCallback(() => {
     lastColumnSwapRef.current = null;
     setActiveCard(null);
+    setActiveColumn(null);
     setLocalCards(null);
     document.body.classList.remove('is-dragging');
     onUpdateActivityRef.current?.(null);
   }, []);
 
+  // Reconciliación en vivo si otro admin elimina columnas o tarjetas durante un arrastre activo
+  useEffect(() => {
+    if (activeColumn && !columns.some(c => c.id === activeColumn.id)) {
+      cleanup();
+      onDragAbortedRef.current?.('La columna que estabas reordenando fue eliminada.');
+      return;
+    }
+
+    if (activeCard) {
+      if (!cards.some(c => c.id === activeCard.id)) {
+        cleanup();
+        onDragAbortedRef.current?.('Se canceló el arrastre porque la tarjeta o su columna origen fue eliminada.');
+        return;
+      }
+
+      if (localCards) {
+        const validColIds = new Set(columns.map(c => c.id));
+        const localActive = localCards.find(c => c.id === activeCard.id);
+        if (localActive && !validColIds.has(localActive.columnId)) {
+          setLocalCards(visibleCards);
+          onDragAbortedRef.current?.('La columna de destino fue eliminada durante el arrastre.');
+        }
+      }
+    }
+  }, [activeCard, activeColumn, cards, columns, localCards, visibleCards, cleanup]);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    const activeType = event.active.data.current?.type;
+    if (activeType === 'column-sortable') {
+      if (!canManageColumnsRef.current) return;
+      const colData = event.active.data.current?.column as Column | undefined;
+      if (colData) {
+        setActiveColumn(colData);
+        document.body.classList.add('is-dragging');
+        onUpdateActivityRef.current?.({ action: 'dragging-column', columnId: colData.id });
+      }
+      return;
+    }
+
     const cardData = event.active.data.current?.card as Card | undefined;
     if (cardData) {
       lastColumnSwapRef.current = null;
       setActiveCard(cardData);
-      setLocalCards(cardsRef.current);
+      setLocalCards(visibleCardsRef.current);
       document.body.classList.add('is-dragging');
       onUpdateActivityRef.current?.({ action: 'dragging-card', cardId: cardData.id });
     }
   }, []);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
+    if (event.active.data.current?.type === 'column-sortable') return;
     const { active, over } = event;
     if (!over) return;
 
@@ -91,7 +159,7 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
     const overId = String(over.id);
     if (activeId === overId) return;
 
-    const currentSnapshot = localCardsRef.current ?? cardsRef.current;
+    const currentSnapshot = localCardsRef.current ?? visibleCardsRef.current;
     const activeSnapshotItem = currentSnapshot.find(c => c.id === activeId);
     if (!activeSnapshotItem) return;
 
@@ -132,7 +200,7 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
     };
 
     setLocalCards(prev => {
-      const current = prev ?? cardsRef.current;
+      const current = prev ?? visibleCardsRef.current;
       const activeIndex = current.findIndex(c => c.id === activeId);
       if (activeIndex === -1) return prev;
 
@@ -174,11 +242,32 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const baseCards = cardsRef.current;
-    const currentCards = localCardsRef.current ?? baseCards;
+    const baseVisibleCards = visibleCardsRef.current;
+    const currentCards = localCardsRef.current ?? baseVisibleCards;
+    const activeType = event.active.data.current?.type;
     cleanup();
 
     const { active, over } = event;
     if (!over) return;
+
+    if (activeType === 'column-sortable') {
+      if (!canManageColumnsRef.current) return;
+      const activeColId = (active.data.current?.column as Column | undefined)?.id;
+      const overColId = (over.data.current?.column as Column | undefined)?.id;
+      if (!activeColId || !overColId || activeColId === overColId) return;
+
+      const sortedCols = [...columnsRef.current].sort(compareColumns);
+      const fromIdx = sortedCols.findIndex(c => c.id === activeColId);
+      const toIdx = sortedCols.findIndex(c => c.id === overColId);
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+
+      const reordered = arrayMove(sortedCols, fromIdx, toIdx);
+      const finalIdx = reordered.findIndex(c => c.id === activeColId);
+      const prevCol = finalIdx > 0 ? reordered[finalIdx - 1] : null;
+      const nextCol = finalIdx < reordered.length - 1 ? reordered[finalIdx + 1] : null;
+      moveColumnRef.current(activeColId, prevCol ? prevCol.orderKey : null, nextCol ? nextCol.orderKey : null);
+      return;
+    }
 
     const activeId = String(active.id);
     const overId = String(over.id);
@@ -191,51 +280,82 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
     const overCard = currentCards.find(c => c.id === overId);
     const targetColId = isOverColumn ? overId : (overCard?.columnId ?? draggedCard.columnId);
 
-    const isSameOriginalColumn = originalCard.columnId === targetColId;
-    const colCards = isSameOriginalColumn
-      ? baseCards.filter(c => c.columnId === targetColId).sort(compareCards)
-      : currentCards.filter(c => c.columnId === targetColId);
-
-    const activeIndexInCol = colCards.findIndex(c => c.id === activeId);
-
-    let reorderedColCards: Card[];
-
-    if (isOverColumn || !overCard) {
-      if (activeIndexInCol !== -1) {
-        reorderedColCards = isSameOriginalColumn
-          ? arrayMove(colCards, activeIndexInCol, colCards.length - 1)
-          : colCards;
-      } else {
-        reorderedColCards = [...colCards, { ...draggedCard, columnId: targetColId }];
-      }
-    } else {
-      const overIndexInCol = colCards.findIndex(c => c.id === overId);
-      if (activeIndexInCol !== -1 && overIndexInCol !== -1) {
-        reorderedColCards = arrayMove(colCards, activeIndexInCol, overIndexInCol);
-      } else if (overIndexInCol !== -1) {
-        reorderedColCards = [...colCards];
-        reorderedColCards.splice(overIndexInCol, 0, { ...draggedCard, columnId: targetColId });
-      } else {
-        reorderedColCards = colCards;
-      }
-    }
-
-    const finalIndex = reorderedColCards.findIndex(c => c.id === activeId);
-    if (finalIndex === -1) return;
-
-    if (isSameOriginalColumn && activeIndexInCol === finalIndex) {
+    if (!columnsRef.current.some(col => col.id === targetColId)) {
+      onDragAbortedRef.current?.('La columna de destino fue eliminada; la tarjeta se mantuvo en su ubicación actual.');
       return;
     }
 
-    const prevCard = finalIndex > 0 ? reorderedColCards[finalIndex - 1] : null;
-    const nextCard = finalIndex < reorderedColCards.length - 1 ? reorderedColCards[finalIndex + 1] : null;
+    const isSameOriginalColumn = originalCard.columnId === targetColId;
+    const visibleColCards = isSameOriginalColumn
+      ? baseVisibleCards.filter(c => c.columnId === targetColId).sort(compareCards)
+      : currentCards.filter(c => c.columnId === targetColId);
 
-    moveCardRef.current(
+    const activeIndexInVisible = visibleColCards.findIndex(c => c.id === activeId);
+    let reorderedVisible: Card[];
+
+    if (isOverColumn || !overCard) {
+      if (activeIndexInVisible !== -1) {
+        reorderedVisible = isSameOriginalColumn
+          ? arrayMove(visibleColCards, activeIndexInVisible, visibleColCards.length - 1)
+          : visibleColCards;
+      } else {
+        reorderedVisible = [...visibleColCards, { ...draggedCard, columnId: targetColId }];
+      }
+    } else {
+      const overIndexInVisible = visibleColCards.findIndex(c => c.id === overId);
+      if (activeIndexInVisible !== -1 && overIndexInVisible !== -1) {
+        reorderedVisible = arrayMove(visibleColCards, activeIndexInVisible, overIndexInVisible);
+      } else if (overIndexInVisible !== -1) {
+        reorderedVisible = [...visibleColCards];
+        reorderedVisible.splice(overIndexInVisible, 0, { ...draggedCard, columnId: targetColId });
+      } else {
+        reorderedVisible = visibleColCards;
+      }
+    }
+
+    const finalVisibleIndex = reorderedVisible.findIndex(c => c.id === activeId);
+    if (finalVisibleIndex === -1) return;
+
+    if (isSameOriginalColumn && activeIndexInVisible === finalVisibleIndex) {
+      return;
+    }
+
+    // Calcular claves vecinas sobre la lista COMPLETA sin filtrar para no pisar tarjetas ocultas
+    const fullTargetColCards = baseCards
+      .filter(c => c.columnId === targetColId && c.id !== activeId)
+      .sort(compareCards);
+
+    let prevCard: Card | null = null;
+    let nextCard: Card | null = null;
+
+    if (baseVisibleCards.length === baseCards.length) {
+      prevCard = finalVisibleIndex > 0 ? reorderedVisible[finalVisibleIndex - 1] : null;
+      nextCard = finalVisibleIndex < reorderedVisible.length - 1 ? reorderedVisible[finalVisibleIndex + 1] : null;
+    } else {
+      const visiblePrev = finalVisibleIndex > 0 ? reorderedVisible[finalVisibleIndex - 1] : null;
+      const visibleNext = finalVisibleIndex < reorderedVisible.length - 1 ? reorderedVisible[finalVisibleIndex + 1] : null;
+      if (visibleNext) {
+        const idxNext = fullTargetColCards.findIndex(c => c.id === visibleNext.id);
+        nextCard = idxNext >= 0 ? fullTargetColCards[idxNext] : null;
+        prevCard = idxNext > 0 ? fullTargetColCards[idxNext - 1] : null;
+      } else if (visiblePrev) {
+        const idxPrev = fullTargetColCards.findIndex(c => c.id === visiblePrev.id);
+        prevCard = idxPrev >= 0 ? fullTargetColCards[idxPrev] : null;
+        nextCard = idxPrev >= 0 && idxPrev < fullTargetColCards.length - 1 ? fullTargetColCards[idxPrev + 1] : null;
+      } else {
+        prevCard = fullTargetColCards[fullTargetColCards.length - 1] ?? null;
+      }
+    }
+
+    const moved = moveCardRef.current(
       activeId,
       targetColId,
       prevCard ? prevCard.orderKey : null,
       nextCard ? nextCard.orderKey : null
     );
+    if (!moved) {
+      onDragAbortedRef.current?.('La columna de destino fue eliminada; la tarjeta se mantuvo en su ubicación actual.');
+    }
   }, [cleanup]);
 
   const handleDragCancel = useCallback(() => {
@@ -245,6 +365,7 @@ export function useKanbanDnd({ cards, columns, moveCard, onUpdateActivity }: Use
   return {
     sensors,
     activeCard,
+    activeColumn,
     displayCards,
     collisionDetection: kanbanCollisionDetection,
     handleDragStart,

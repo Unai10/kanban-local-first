@@ -7,7 +7,10 @@ import {
   isValidJoinCode,
   isValidTokenFormat,
   sanitizeSingleLineText,
+  type BoardExportSnapshot,
   type BoardMetaSyncItem,
+  type BoardRole,
+  type BoardTemplateId,
   type UserBoardEntry,
 } from '@kanban/shared-types';
 import { LocalUserRepository } from './localUserRepository.js';
@@ -21,10 +24,12 @@ export interface InitialBoardResolution {
   ownerToken?: string;
   joinCode?: string;
   title: string;
-  role: 'owner' | 'member';
+  role: BoardRole;
   ownerId?: string;
   ownerName?: string;
   seedDemoCards?: boolean;
+  initialTemplateId?: BoardTemplateId;
+  initialImportSnapshot?: BoardExportSnapshot;
 }
 
 function parseBoardParamsFromLocation(): {
@@ -77,6 +82,7 @@ export const LocalBoardRepository = {
           .filter((b): b is UserBoardEntry => Boolean(b && typeof b.id === 'string' && ROOM_NAME_REGEX.test(b.id)))
           .map(b => {
             const isOwner = isValidTokenFormat(b.ownerToken);
+            const role: BoardRole = isOwner ? 'owner' : (b.role === 'admin' ? 'admin' : 'member');
             const cleanPrevTitle = b.previousTitle
               ? sanitizeSingleLineText(b.previousTitle, LIMITS.BOARD_TITLE_MAX, '')
               : undefined;
@@ -86,7 +92,7 @@ export const LocalBoardRepository = {
             return {
               ...b,
               title: sanitizeSingleLineText(b.title, LIMITS.BOARD_TITLE_MAX, 'Tablero'),
-              role: isOwner ? 'owner' : 'member',
+              role,
               ownerName: isOwner
                 ? user.name
                 : sanitizeSingleLineText(b.ownerName, LIMITS.USER_NAME_MAX, 'Propietario'),
@@ -136,7 +142,7 @@ export const LocalBoardRepository = {
       ownerId?: string;
       ownerName?: string;
       joinCode?: string;
-      role?: 'owner' | 'member';
+      role?: BoardRole;
       previousTitle?: string | null;
       previousOwnerName?: string | null;
       pendingTitleSync?: boolean;
@@ -242,6 +248,10 @@ export const LocalBoardRepository = {
         updated.joinCode = remote.joinCode;
         dirty = true;
       }
+      if (updated.role !== 'owner' && remote.role && remote.role !== 'owner' && remote.role !== updated.role) {
+        updated.role = remote.role;
+        dirty = true;
+      }
 
       const isActiveOnline = board.id === activeBoardId && isOnline;
       const skipTitleOverwrite = updated.role === 'owner' && updated.pendingTitleSync;
@@ -331,7 +341,7 @@ export const LocalBoardRepository = {
         const realOwnerId = existing?.ownerId || urlOwnerId || '';
         const realOwnerName = existing?.ownerName || urlOwnerName || (realOwnerId === user.id ? user.name : 'Propietario');
         const isOwner = Boolean(ownerToken);
-        const role: 'owner' | 'member' = isOwner ? 'owner' : 'member';
+        const role: BoardRole = isOwner ? 'owner' : (existing?.role === 'admin' ? 'admin' : 'member');
 
         LocalBoardRepository.saveRegisteredBoard({
           id: urlBoard,
@@ -372,13 +382,14 @@ export const LocalBoardRepository = {
 
     if (lastBoard) {
       const isOwner = lastBoard.role === 'owner';
+      const role: BoardRole = isOwner ? 'owner' : (lastBoard.role === 'admin' ? 'admin' : 'member');
       return {
         boardId: lastBoard.id,
         inviteToken: lastBoard.inviteToken,
         ownerToken: lastBoard.ownerToken,
         joinCode: lastBoard.joinCode,
         title: lastBoard.title,
-        role: isOwner ? 'owner' : 'member',
+        role,
         ownerId: lastBoard.ownerId,
         ownerName: isOwner ? user.name : (lastBoard.ownerName || 'Propietario'),
       };

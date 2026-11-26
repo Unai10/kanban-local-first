@@ -70,7 +70,7 @@ export function ShareModal({
           type="button"
           onClick={onClose}
           aria-label="Cerrar modal de compartir"
-          className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+          className="absolute top-4 right-4 text-slate-400 hover:text-ink p-1 rounded-lg hover:bg-slate-800 transition"
         >
           <X className="w-5 h-5" />
         </button>
@@ -80,7 +80,7 @@ export function ShareModal({
             <ShieldCheck className="w-4 h-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 id="share-modal-title" className="text-sm font-semibold text-white">Compartir Tablero</h3>
+            <h3 id="share-modal-title" className="text-sm font-semibold text-ink">Compartir Tablero</h3>
             <p className="text-xs text-slate-400 truncate">{boardTitle}</p>
           </div>
         </div>

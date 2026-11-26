@@ -7,8 +7,13 @@ import {
   LIMITS,
   WS_CLOSE_CODE,
   WS_MESSAGE_TYPE,
+  compareCards,
+  compareColumns,
+  computeFlatOrderKeyRepairs,
   computeOrderKeyRepairs,
+  generateFractionalKey,
   generateNKeysBetween,
+  getBoardTemplate,
   isValidOrderKey,
   sanitizeActivity,
   sanitizeAssignee,
@@ -20,8 +25,13 @@ import {
   sanitizePriority,
   sanitizeSingleLineText,
   sanitizeStoryPoints,
+  sanitizeCardComment,
+  type BoardExportSnapshot,
   type BoardMember,
+  type BoardRole,
+  type BoardTemplateId,
   type Card,
+  type CardComment,
   type Column,
   type CursorPosition,
   type Label,
@@ -45,9 +55,12 @@ export interface YjsRoomClientOptions {
   inviteToken?: string;
   ownerToken?: string;
   joinCode?: string;
+  initialRole?: BoardRole;
   initialOwnerId?: string;
   initialOwnerName?: string;
   seedDemoCards?: boolean;
+  initialTemplateId?: BoardTemplateId;
+  initialImportSnapshot?: BoardExportSnapshot;
   onSyncStatusChange?: (status: SyncStatus) => void;
   onCollaboratorsChange?: (collaborators: UserPresence[]) => void;
   onDataChange?: () => void;
@@ -94,8 +107,28 @@ function writeColumnFields(yCol: Y.Map<unknown>, col: Column): void {
   yCol.set('boardId', col.boardId);
   yCol.set('title', col.title);
   yCol.set('orderKey', col.orderKey);
-  if (col.color) yCol.set('color', col.color);
+  if (col.color) {
+    yCol.set('color', col.color);
+  } else {
+    yCol.delete('color');
+  }
   yCol.set('createdAt', col.createdAt);
+  if (col.updatedAt !== undefined) yCol.set('updatedAt', col.updatedAt);
+  if (col.deleted !== undefined) yCol.set('deleted', col.deleted);
+  if (col.deletedAt !== undefined) yCol.set('deletedAt', col.deletedAt);
+  if (col.deletedTargetColumnId !== undefined) yCol.set('deletedTargetColumnId', col.deletedTargetColumnId);
+}
+
+function writeCommentFields(yComment: Y.Map<unknown>, comment: CardComment): void {
+  yComment.set('id', comment.id);
+  yComment.set('cardId', comment.cardId);
+  yComment.set('authorId', comment.authorId);
+  yComment.set('authorName', comment.authorName);
+  yComment.set('authorColor', comment.authorColor);
+  yComment.set('text', comment.text);
+  yComment.set('createdAt', comment.createdAt);
+  if (comment.deleted !== undefined) yComment.set('deleted', comment.deleted);
+  if (comment.deletedAt !== undefined) yComment.set('deletedAt', comment.deletedAt);
 }
 
 function writeCardFields(yCard: Y.Map<unknown>, card: Card): void {
@@ -222,6 +255,159 @@ export function extractCardsFromMap(
 }
 
 /**
+ * Extrae las columnas activas (no eliminadas) del mapa Yjs.
+ */
+export function extractColumnsFromMap(
+  columnsMap: Y.Map<Y.Map<unknown> | Column>
+): Column[] {
+  const result: Column[] = [];
+  for (const [key, raw] of columnsMap.entries()) {
+    if (!raw || typeof raw !== 'object') continue;
+    const source = raw as Y.Map<unknown> | Record<string, unknown>;
+    if (readField<boolean>(source, 'deleted') === true) continue;
+
+    const id = sanitizeSingleLineText(readField<string>(source, 'id') ?? key, 64);
+    const boardId = sanitizeSingleLineText(readField<string>(source, 'boardId') ?? '', 64);
+    const title = sanitizeSingleLineText(readField<string>(source, 'title'), LIMITS.COLUMN_TITLE_MAX, 'Columna');
+    const rawOrderKey = readField<string>(source, 'orderKey');
+    const orderKey = isValidOrderKey(rawOrderKey) ? rawOrderKey : 'a0';
+    const rawColor = readField<string>(source, 'color');
+    const createdAt = readField<number>(source, 'createdAt');
+    const updatedAt = readField<number>(source, 'updatedAt');
+
+    if (!id) continue;
+
+    result.push({
+      id,
+      boardId,
+      title,
+      orderKey,
+      color: rawColor ? sanitizeHexColor(rawColor) : undefined,
+      createdAt: typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : 0,
+      ...(typeof updatedAt === 'number' && Number.isFinite(updatedAt) ? { updatedAt } : {}),
+    });
+  }
+  return result;
+}
+
+/**
+ * Extrae los comentarios activos del mapa `comments` resolviendo autor desde `membersMap`.
+ */
+export function extractCommentsFromMap(
+  commentsMap: Y.Map<Y.Map<unknown> | CardComment>,
+  membersMap?: Y.Map<Y.Map<unknown> | BoardMember>
+): CardComment[] {
+  const membersById = membersMap ? extractMembersMap(membersMap) : null;
+  const result: CardComment[] = [];
+  for (const [key, raw] of commentsMap.entries()) {
+    if (!raw || typeof raw !== 'object') continue;
+    const plain = raw instanceof Y.Map ? Object.fromEntries(raw.entries()) : raw;
+    const comment = sanitizeCardComment(plain, key);
+    if (!comment || comment.deleted) continue;
+
+    if (membersById) {
+      const member = membersById.get(comment.authorId);
+      if (member && !member.left) {
+        comment.authorName = member.name;
+        comment.authorColor = member.color;
+      }
+    }
+    result.push(comment);
+  }
+  return result.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/**
+ * Resuelve de forma determinista colisiones de `orderKey` entre columnas activas.
+ */
+export function reconcileColumnsInDoc(
+  ydoc: Y.Doc,
+  columnsMap: Y.Map<Y.Map<unknown> | Column>
+): boolean {
+  const columns = extractColumnsFromMap(columnsMap);
+  const repairs = computeFlatOrderKeyRepairs(columns);
+  if (repairs.length === 0) return false;
+
+  ydoc.transact(() => {
+    for (const repair of repairs) {
+      const existing = columnsMap.get(repair.id);
+      if (!existing) continue;
+      if (existing instanceof Y.Map) {
+        existing.set('orderKey', repair.orderKey);
+      } else {
+        const yCol = new Y.Map<unknown>();
+        writeColumnFields(yCol, { ...(existing as Column), orderKey: repair.orderKey });
+        columnsMap.set(repair.id, yCol);
+      }
+    }
+  }, RECONCILE_ORIGIN);
+
+  return true;
+}
+
+/**
+ * Reconcilia de forma determinista tarjetas activas que quedaron apuntando a columnas
+ * eliminadas o inexistentes tras trabajar sin conexión (siguiendo `deletedTargetColumnId`
+ * cuando la columna fue vaciada hacia otra, o la primera columna activa como fallback).
+ */
+export function reconcileOrphanCardsInDoc(
+  ydoc: Y.Doc,
+  cardsMap: Y.Map<Y.Map<unknown> | Card>,
+  columnsMap: Y.Map<Y.Map<unknown> | Column>
+): boolean {
+  const activeCols = extractColumnsFromMap(columnsMap).sort(compareColumns);
+  if (activeCols.length === 0) return false;
+
+  const activeColIds = new Set(activeCols.map(c => c.id));
+  const fallbackColId = activeCols[0].id;
+  const activeCards = extractCardsFromMap(cardsMap);
+  const orphanCards = activeCards.filter(c => !activeColIds.has(c.columnId)).sort(compareCards);
+  if (orphanCards.length === 0) return false;
+
+  const resolveDestinationColumn = (startColId: string): string => {
+    let cursor: string | null | undefined = startColId;
+    const visited = new Set<string>();
+    for (let hop = 0; hop < 10 && cursor; hop++) {
+      if (activeColIds.has(cursor)) return cursor;
+      if (visited.has(cursor)) break;
+      visited.add(cursor);
+      const raw = columnsMap.get(cursor);
+      if (!raw || typeof raw !== 'object') break;
+      cursor = readField<string | null>(raw as Y.Map<unknown> | Record<string, unknown>, 'deletedTargetColumnId');
+    }
+    return fallbackColId;
+  };
+
+  const lastKeyByCol = new Map<string, string | null>();
+  for (const col of activeCols) {
+    const colCards = activeCards.filter(c => c.columnId === col.id).sort(compareCards);
+    lastKeyByCol.set(col.id, colCards[colCards.length - 1]?.orderKey ?? null);
+  }
+
+  ydoc.transact(() => {
+    for (const orphan of orphanCards) {
+      const targetColId = resolveDestinationColumn(orphan.columnId);
+      const prevKey = lastKeyByCol.get(targetColId) ?? null;
+      const nextKey = generateFractionalKey(prevKey, null);
+      lastKeyByCol.set(targetColId, nextKey);
+
+      const raw = cardsMap.get(orphan.id);
+      if (!raw) continue;
+      if (raw instanceof Y.Map) {
+        raw.set('columnId', targetColId);
+        raw.set('orderKey', nextKey);
+      } else {
+        const yCard = new Y.Map<unknown>();
+        writeCardFields(yCard, { ...(raw as Card), columnId: targetColId, orderKey: nextKey });
+        cardsMap.set(orphan.id, yCard);
+      }
+    }
+  }, RECONCILE_ORIGIN);
+
+  return true;
+}
+
+/**
  * Resuelve de forma determinista colisiones de `orderKey` entre tarjetas activas en el Y.Doc compartido.
  */
 export function reconcileCardsInDoc(
@@ -258,11 +444,13 @@ export class YjsRoomClient {
   public readonly cardsMap: Y.Map<Y.Map<unknown> | Card>;
   public readonly columnsMap: Y.Map<Y.Map<unknown> | Column>;
   public readonly membersMap: Y.Map<Y.Map<unknown> | BoardMember>;
+  public readonly commentsMap: Y.Map<Y.Map<unknown> | CardComment>;
   private readonly idbProvider: IndexeddbPersistence;
   private readonly wsProvider: WebsocketProvider;
   private isDestroyed = false;
   private hasLocalDocSynced = false;
   private latestUser: UserProfile;
+  private latestRole: BoardRole;
   private isOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
   private readonly onSyncStatusChangeCb?: (status: SyncStatus) => void;
 
@@ -327,9 +515,12 @@ export class YjsRoomClient {
       inviteToken,
       ownerToken,
       joinCode,
+      initialRole,
       initialOwnerId,
       initialOwnerName,
       seedDemoCards = false,
+      initialTemplateId,
+      initialImportSnapshot,
       onSyncStatusChange,
       onCollaboratorsChange,
       onDataChange,
@@ -340,21 +531,70 @@ export class YjsRoomClient {
 
     this.onSyncStatusChangeCb = onSyncStatusChange;
     this.latestUser = { ...currentUser };
+    this.latestRole = ownerToken ? 'owner' : (initialRole ?? 'member');
     this.ydoc = new Y.Doc();
     this.cardsMap = this.ydoc.getMap<Y.Map<unknown> | Card>('cards');
     this.columnsMap = this.ydoc.getMap<Y.Map<unknown> | Column>('columns');
     this.membersMap = this.ydoc.getMap<Y.Map<unknown> | BoardMember>('members');
+    this.commentsMap = this.ydoc.getMap<Y.Map<unknown> | CardComment>('comments');
 
     const ensureDefaultColumns = () => {
       if (this.isDestroyed || this.columnsMap.size > 0) return;
-      const [keyTodo, keyProgress, keyDone] = generateNKeysBetween(null, null, 3);
+
+      if (initialImportSnapshot && initialImportSnapshot.columns.length > 0 && this.cardsMap.size === 0) {
+        const now = Date.now();
+        this.ydoc.transact(() => {
+          for (const col of initialImportSnapshot.columns) {
+            this.setColumnInternal({
+              id: col.id,
+              boardId,
+              title: col.title,
+              orderKey: col.orderKey,
+              color: col.color,
+              createdAt: col.createdAt || now,
+            });
+          }
+          for (const card of initialImportSnapshot.cards) {
+            const yCard = new Y.Map<unknown>();
+            writeCardFields(yCard, {
+              ...card,
+              boardId,
+              deleted: false,
+              deletedAt: null,
+              deletedAtEditCount: 0,
+              editCount: 1,
+            });
+            this.cardsMap.set(card.id, yCard);
+          }
+          for (const comment of initialImportSnapshot.comments) {
+            const yComment = new Y.Map<unknown>();
+            writeCommentFields(yComment, {
+              ...comment,
+              deleted: false,
+              deletedAt: null,
+            });
+            this.commentsMap.set(comment.id, yComment);
+          }
+        });
+        return;
+      }
+
+      const template = getBoardTemplate(initialTemplateId);
+      const keys = generateNKeysBetween(null, null, template.columns.length);
       const now = Date.now();
       const dayMs = 24 * 60 * 60 * 1000;
-      const defaultCols: Column[] = [
-        { id: 'col-todo', boardId, title: 'Por Hacer', orderKey: keyTodo, createdAt: now },
-        { id: 'col-progress', boardId, title: 'En Progreso', orderKey: keyProgress, createdAt: now },
-        { id: 'col-done', boardId, title: 'Terminado', orderKey: keyDone, createdAt: now },
-      ];
+      const defaultCols: Column[] = template.columns.map((col, idx) => ({
+        id: col.id,
+        boardId,
+        title: col.title,
+        orderKey: keys[idx],
+        color: col.color,
+        createdAt: now,
+      }));
+      const firstColId = defaultCols[0]?.id ?? 'col-todo';
+      const secondColId = defaultCols[1]?.id ?? firstColId;
+      const lastColId = defaultCols[defaultCols.length - 1]?.id ?? firstColId;
+
       this.ydoc.transact(() => {
         defaultCols.forEach(col => this.setColumnInternal(col));
 
@@ -364,7 +604,7 @@ export class YjsRoomClient {
             {
               id: `demo-1-${boardId.slice(-6)}`,
               boardId,
-              columnId: 'col-todo',
+              columnId: firstColId,
               title: 'Probar colaboración en tiempo real',
               description: 'Pulsa "Compartir" arriba y abre el enlace o código de sala en otra pestaña/navegador para ver cursores y cambios en vivo.',
               orderKey: k1,
@@ -383,7 +623,7 @@ export class YjsRoomClient {
             {
               id: `demo-2-${boardId.slice(-6)}`,
               boardId,
-              columnId: 'col-todo',
+              columnId: firstColId,
               title: 'Simular modo Offline (IndexedDB)',
               description: 'Activa "Sin conexión" en DevTools, edita o mueve tarjetas y vuelve online para ver la reconciliación automática CRDT.',
               orderKey: k2,
@@ -398,10 +638,10 @@ export class YjsRoomClient {
             {
               id: `demo-3-${boardId.slice(-6)}`,
               boardId,
-              columnId: 'col-progress',
+              columnId: secondColId,
               title: 'Configurar prioridades, fechas y subtareas',
               description: 'Haz clic sobre cualquier tarjeta para abrir el editor completo o edita el título del tablero desde la cabecera.',
-              orderKey: k1,
+              orderKey: secondColId === firstColId ? generateNKeysBetween(k2, null, 1)[0] : k1,
               labels: [{ id: 'lbl-demo-urg', name: 'Urgente', color: '#f59e0b' }],
               priority: 'urgent',
               dueDate: now + dayMs,
@@ -417,10 +657,10 @@ export class YjsRoomClient {
             {
               id: `demo-4-${boardId.slice(-6)}`,
               boardId,
-              columnId: 'col-done',
+              columnId: lastColId,
               title: 'Arquitectura Local-First con Yjs + SQLite',
               description: 'Sincronización binaria mediante deltas CRDT, Fractional Indexing y persistencia local instantánea.',
-              orderKey: k1,
+              orderKey: lastColId === firstColId ? generateNKeysBetween(k2, null, 2)[1] : k1,
               labels: [{ id: 'lbl-demo-done', name: 'Feature', color: '#3b82f6' }],
               priority: 'low',
               checklist: [{ id: 'chk-demo-5', text: 'Desplegado como PWA instalable', completed: true }],
@@ -453,6 +693,10 @@ export class YjsRoomClient {
       if (ownerToken) {
         ensureDefaultColumns();
       }
+      if (this.latestRole === 'owner' || this.latestRole === 'admin') {
+        reconcileColumnsInDoc(this.ydoc, this.columnsMap);
+      }
+      reconcileOrphanCardsInDoc(this.ydoc, this.cardsMap, this.columnsMap);
       reconcileCardsInDoc(this.ydoc, this.cardsMap);
       this.syncCurrentUserInDoc(this.latestUser);
       onDataChange?.();
@@ -465,7 +709,9 @@ export class YjsRoomClient {
     if (ownerToken) protocols.push(`owner.${ownerToken}`);
     if (joinCode) protocols.push(`joincode.${joinCode}`);
 
-    const wsParams: Record<string, string> = {};
+    const wsParams: Record<string, string> = {
+      userId: currentUser.id,
+    };
     if (ownerToken) {
       if (boardTitle) wsParams.title = boardTitle;
       if (initialOwnerId) wsParams.ownerId = initialOwnerId;
@@ -492,7 +738,12 @@ export class YjsRoomClient {
       try {
         const raw = decoding.readVarString(decoder);
         const parsed = JSON.parse(raw) as ServerBoardMetaPayload;
-        if (parsed && parsed.boardId === boardId && (parsed.role === 'owner' || parsed.role === 'member')) {
+        if (
+          parsed &&
+          parsed.boardId === boardId &&
+          (parsed.role === 'owner' || parsed.role === 'admin' || parsed.role === 'member')
+        ) {
+          this.latestRole = parsed.role;
           onOwnerResolved?.({
             boardId: parsed.boardId,
             title: sanitizeSingleLineText(parsed.title, LIMITS.BOARD_TITLE_MAX, 'Tablero Kanban'),
@@ -500,6 +751,7 @@ export class YjsRoomClient {
             ownerName: sanitizeSingleLineText(parsed.ownerName, LIMITS.USER_NAME_MAX, 'Propietario'),
             joinCode: parsed.joinCode,
             role: parsed.role,
+            ...(parsed.columnsReverted ? { columnsReverted: true } : {}),
           });
         }
       } catch (err) {
@@ -511,6 +763,10 @@ export class YjsRoomClient {
       if (this.isDestroyed || !isSynced) return;
       this.hasLocalDocSynced = true;
       ensureDefaultColumns();
+      if (this.latestRole === 'owner' || this.latestRole === 'admin') {
+        reconcileColumnsInDoc(this.ydoc, this.columnsMap);
+      }
+      reconcileOrphanCardsInDoc(this.ydoc, this.cardsMap, this.columnsMap);
       reconcileCardsInDoc(this.ydoc, this.cardsMap);
       this.syncCurrentUserInDoc(this.latestUser);
       onDataChange?.();
@@ -616,15 +872,29 @@ export class YjsRoomClient {
       this.cardsMap.observeDeep((_events, transaction) => {
         if (this.isDestroyed) return;
         if (transaction.origin !== RECONCILE_ORIGIN) {
+          const movedOrphans = reconcileOrphanCardsInDoc(this.ydoc, this.cardsMap, this.columnsMap);
           const repaired = reconcileCardsInDoc(this.ydoc, this.cardsMap);
-          if (repaired) return;
+          if (movedOrphans || repaired) return;
         }
         onDataChange();
       });
-      this.columnsMap.observeDeep(() => {
-        if (!this.isDestroyed) onDataChange();
+      this.columnsMap.observeDeep((_events, transaction) => {
+        if (this.isDestroyed) return;
+        if (transaction.origin !== RECONCILE_ORIGIN) {
+          const repairedCols =
+            this.latestRole === 'owner' || this.latestRole === 'admin'
+              ? reconcileColumnsInDoc(this.ydoc, this.columnsMap)
+              : false;
+          const movedOrphans = reconcileOrphanCardsInDoc(this.ydoc, this.cardsMap, this.columnsMap);
+          const repairedCards = movedOrphans ? reconcileCardsInDoc(this.ydoc, this.cardsMap) : false;
+          if (repairedCols || movedOrphans || repairedCards) return;
+        }
+        onDataChange();
       });
       this.membersMap.observeDeep(() => {
+        if (!this.isDestroyed) onDataChange();
+      });
+      this.commentsMap.observeDeep(() => {
         if (!this.isDestroyed) onDataChange();
       });
     }
@@ -644,11 +914,18 @@ export class YjsRoomClient {
         : existingMemberRaw;
     const existingMember = sanitizeBoardMember(existingMemberPlain, user.id);
 
+    const desiredRole: BoardRole = this.latestRole === 'owner'
+      ? 'owner'
+      : this.latestRole === 'admin'
+      ? 'admin'
+      : (existingMember?.role === 'admin' ? 'admin' : 'member');
+
     const memberNeedsUpdate =
       !existingMember ||
       existingMember.left === true ||
       existingMember.name !== user.name ||
-      existingMember.color !== user.color;
+      existingMember.color !== user.color ||
+      (this.latestRole === 'owner' && existingMember.role !== 'owner');
 
     const cardsToUpdate: Array<{ id: string; raw: Y.Map<unknown> | Card }> = [];
     for (const [cardId, raw] of this.cardsMap.entries()) {
@@ -674,6 +951,9 @@ export class YjsRoomClient {
         yMember.set('userId', user.id);
         yMember.set('name', user.name);
         yMember.set('color', user.color);
+        if (!existingMember?.role || this.latestRole === 'owner') {
+          yMember.set('role', desiredRole);
+        }
         yMember.set('left', false);
         yMember.set('leftAt', null);
         yMember.set('updatedAt', now);
@@ -716,38 +996,229 @@ export class YjsRoomClient {
   }
 
   public getColumns(): Column[] {
-    const result: Column[] = [];
-    for (const [key, raw] of this.columnsMap.entries()) {
-      if (!raw || typeof raw !== 'object') continue;
-      const source = raw as Y.Map<unknown> | Record<string, unknown>;
-      const id = sanitizeSingleLineText(readField<string>(source, 'id') ?? key, 64);
-      const boardId = sanitizeSingleLineText(readField<string>(source, 'boardId') ?? '', 64);
-      const title = sanitizeSingleLineText(readField<string>(source, 'title'), LIMITS.COLUMN_TITLE_MAX, 'Columna');
-      const rawOrderKey = readField<string>(source, 'orderKey');
-      const orderKey = isValidOrderKey(rawOrderKey) ? rawOrderKey : 'a0';
-      const rawColor = readField<string>(source, 'color');
-      const createdAt = readField<number>(source, 'createdAt');
+    return extractColumnsFromMap(this.columnsMap);
+  }
 
-      if (!id) continue;
+  public setRole(role: BoardRole): void {
+    this.latestRole = role;
+  }
 
-      result.push({
-        id,
-        boardId,
-        title,
-        orderKey,
-        color: rawColor ? sanitizeHexColor(rawColor) : undefined,
-        createdAt: typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : 0,
+  public createColumn(col: Column): void {
+    if (this.isDestroyed || this.latestRole === 'member') return;
+    if (this.getColumns().length >= LIMITS.MAX_COLUMNS_PER_BOARD) return;
+    this.ydoc.transact(() => {
+      this.setColumnInternal({
+        ...col,
+        deleted: false,
+        deletedAt: null,
+        updatedAt: col.updatedAt ?? Date.now(),
       });
-    }
-    return result;
+    });
+  }
+
+  public updateColumnFields(
+    columnId: string,
+    updates: Partial<Pick<Column, 'title' | 'color' | 'orderKey'>>
+  ): void {
+    if (this.isDestroyed || this.latestRole === 'member') return;
+    const existing = this.columnsMap.get(columnId);
+    if (!existing) return;
+
+    this.ydoc.transact(() => {
+      let yCol: Y.Map<unknown>;
+      if (existing instanceof Y.Map) {
+        yCol = existing;
+      } else {
+        yCol = new Y.Map<unknown>();
+        writeColumnFields(yCol, existing as Column);
+        this.columnsMap.set(columnId, yCol);
+      }
+      if (updates.title !== undefined) yCol.set('title', updates.title);
+      if (updates.orderKey !== undefined) yCol.set('orderKey', updates.orderKey);
+      if (updates.color !== undefined) {
+        if (updates.color) {
+          yCol.set('color', updates.color);
+        } else {
+          yCol.delete('color');
+        }
+      }
+      yCol.set('deleted', false);
+      yCol.set('deletedAt', null);
+      yCol.set('updatedAt', Date.now());
+    });
+  }
+
+  public isColumnActiveById(columnId: string): boolean {
+    const raw = this.columnsMap.get(columnId);
+    if (!raw || typeof raw !== 'object') return false;
+    return readField<boolean>(raw as Y.Map<unknown> | Record<string, unknown>, 'deleted') !== true;
+  }
+
+  public deleteColumn(columnId: string, targetColumnIdForCards?: string | null): void {
+    if (this.isDestroyed || this.latestRole === 'member') return;
+    const existingCol = this.columnsMap.get(columnId);
+    if (!existingCol) return;
+
+    const now = Date.now();
+    const validTargetColumnId =
+      targetColumnIdForCards &&
+      targetColumnIdForCards !== columnId &&
+      this.isColumnActiveById(targetColumnIdForCards)
+        ? targetColumnIdForCards
+        : null;
+
+    this.ydoc.transact(() => {
+      const activeCardsInCol = extractCardsFromMap(this.cardsMap, this.membersMap)
+        .filter(c => c.columnId === columnId)
+        .sort(compareCards);
+
+      if (validTargetColumnId) {
+        const targetCards = extractCardsFromMap(this.cardsMap, this.membersMap)
+          .filter(c => c.columnId === validTargetColumnId)
+          .sort(compareCards);
+        const lastTargetKey = targetCards[targetCards.length - 1]?.orderKey ?? null;
+        const newKeys = activeCardsInCol.length > 0
+          ? generateNKeysBetween(lastTargetKey, null, activeCardsInCol.length)
+          : [];
+
+        activeCardsInCol.forEach((card, idx) => {
+          const raw = this.cardsMap.get(card.id);
+          if (raw instanceof Y.Map) {
+            raw.set('columnId', validTargetColumnId);
+            raw.set('orderKey', newKeys[idx]);
+            raw.set('updatedAt', now);
+            raw.set('editCount', ((raw.get('editCount') as number) || 1) + 1);
+          } else if (raw && typeof raw === 'object') {
+            const yCard = new Y.Map<unknown>();
+            writeCardFields(yCard, {
+              ...(raw as Card),
+              columnId: validTargetColumnId,
+              orderKey: newKeys[idx],
+              updatedAt: now,
+              editCount: ((raw as Card).editCount || 1) + 1,
+            });
+            this.cardsMap.set(card.id, yCard);
+          }
+        });
+      } else {
+        for (const card of activeCardsInCol) {
+          const raw = this.cardsMap.get(card.id);
+          if (raw instanceof Y.Map) {
+            const currentEditCount = (raw.get('editCount') as number) || 1;
+            raw.set('deleted', true);
+            raw.set('deletedAtEditCount', currentEditCount);
+            raw.set('deletedAt', now);
+          }
+        }
+      }
+
+      if (existingCol instanceof Y.Map) {
+        existingCol.set('deleted', true);
+        existingCol.set('deletedAt', now);
+        existingCol.set('deletedTargetColumnId', validTargetColumnId);
+        existingCol.set('updatedAt', now);
+      } else {
+        const yCol = new Y.Map<unknown>();
+        writeColumnFields(yCol, {
+          ...(existingCol as Column),
+          deleted: true,
+          deletedAt: now,
+          deletedTargetColumnId: validTargetColumnId,
+          updatedAt: now,
+        });
+        this.columnsMap.set(columnId, yCol);
+      }
+    });
+  }
+
+  public restoreCard(cardId: string): void {
+    if (this.isDestroyed) return;
+    const existing = this.cardsMap.get(cardId);
+    if (!existing) return;
+
+    const now = Date.now();
+    this.ydoc.transact(() => {
+      if (existing instanceof Y.Map) {
+        existing.set('deleted', false);
+        existing.set('deletedAt', null);
+        existing.set('deletedAtEditCount', 0);
+        existing.set('editCount', ((existing.get('editCount') as number) || 1) + 1);
+        existing.set('updatedAt', now);
+      } else if (typeof existing === 'object') {
+        const yCard = new Y.Map<unknown>();
+        writeCardFields(yCard, {
+          ...(existing as Card),
+          deleted: false,
+          deletedAt: null,
+          deletedAtEditCount: 0,
+          editCount: ((existing as Card).editCount || 1) + 1,
+          updatedAt: now,
+        });
+        this.cardsMap.set(cardId, yCard);
+      }
+    });
+  }
+
+  public getComments(): CardComment[] {
+    return extractCommentsFromMap(this.commentsMap, this.membersMap);
+  }
+
+  public addComment(comment: CardComment): void {
+    if (this.isDestroyed) return;
+    this.ydoc.transact(() => {
+      const yComment = new Y.Map<unknown>();
+      writeCommentFields(yComment, {
+        ...comment,
+        deleted: false,
+        deletedAt: null,
+      });
+      this.commentsMap.set(comment.id, yComment);
+    });
+  }
+
+  public deleteComment(commentId: string, requesterId: string): void {
+    if (this.isDestroyed) return;
+    const existing = this.commentsMap.get(commentId);
+    if (!existing) return;
+    const authorId = existing instanceof Y.Map
+      ? (existing.get('authorId') as string | undefined)
+      : (existing as CardComment).authorId;
+    if (authorId !== requesterId) return;
+
+    const now = Date.now();
+    this.ydoc.transact(() => {
+      if (existing instanceof Y.Map) {
+        existing.set('deleted', true);
+        existing.set('deletedAt', now);
+      } else {
+        const yComment = new Y.Map<unknown>();
+        writeCommentFields(yComment, {
+          ...(existing as CardComment),
+          deleted: true,
+          deletedAt: now,
+        });
+        this.commentsMap.set(commentId, yComment);
+      }
+    });
   }
 
   public createCard(card: Card): void {
     if (this.isDestroyed) return;
+    let resolvedColumnId = card.columnId;
+    let resolvedOrderKey = card.orderKey;
+    if (!this.isColumnActiveById(resolvedColumnId)) {
+      const activeCols = this.getColumns().sort(compareColumns);
+      if (activeCols.length === 0) return;
+      resolvedColumnId = activeCols[0].id;
+      const colCards = this.getCards().filter(c => c.columnId === resolvedColumnId).sort(compareCards);
+      resolvedOrderKey = generateFractionalKey(colCards[colCards.length - 1]?.orderKey ?? null, null);
+    }
     this.ydoc.transact(() => {
       const yCard = new Y.Map<unknown>();
       writeCardFields(yCard, {
         ...card,
+        columnId: resolvedColumnId,
+        orderKey: resolvedOrderKey,
         deleted: false,
         deletedAt: null,
         deletedAtEditCount: 0,
@@ -757,10 +1228,14 @@ export class YjsRoomClient {
     });
   }
 
-  public updateCardFields(cardId: string, updates: Partial<Card>): void {
-    if (this.isDestroyed) return;
+  public updateCardFields(cardId: string, updates: Partial<Card>): boolean {
+    if (this.isDestroyed) return false;
     const existing = this.cardsMap.get(cardId);
-    if (!existing) return;
+    if (!existing) return false;
+
+    if (updates.columnId !== undefined && !this.isColumnActiveById(updates.columnId)) {
+      return false;
+    }
 
     this.ydoc.transact(() => {
       let yCard: Y.Map<unknown>;
@@ -788,6 +1263,7 @@ export class YjsRoomClient {
       yCard.set('editCount', ((yCard.get('editCount') as number) || 1) + 1);
       yCard.set('updatedAt', updates.updatedAt ?? Date.now());
     });
+    return true;
   }
 
   public deleteCard(cardId: string): void {

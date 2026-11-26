@@ -14,7 +14,13 @@ import {
   sanitizeChecklist,
   sanitizeAssignee,
   sanitizeBoardMember,
+  sanitizeBoardRole,
+  sanitizeActivity,
+  sanitizeCardComment,
+  validateBoardExportSnapshot,
+  BOARD_TEMPLATES,
   computeOrderKeyRepairs,
+  computeFlatOrderKeyRepairs,
   compareCards,
 } from '../dist/index.js';
 
@@ -124,8 +130,71 @@ test('Sanitizadores de campos enriquecidos de Card', () => {
   assert.equal(sanitizeAssignee({ name: '   ' }), null);
 
   assert.deepEqual(
-    sanitizeBoardMember({ name: '  Marta  ', color: '#ec4899', updatedAt: 1234 }, 'usr-marta'),
-    { userId: 'usr-marta', name: 'Marta', color: '#ec4899', updatedAt: 1234 }
+    sanitizeBoardMember({ name: '  Marta  ', color: '#ec4899', role: 'admin', updatedAt: 1234 }, 'usr-marta'),
+    { userId: 'usr-marta', name: 'Marta', color: '#ec4899', role: 'admin', updatedAt: 1234 }
   );
   assert.equal(sanitizeBoardMember({ name: 'Sin id' }, ''), null);
+  assert.equal(sanitizeBoardRole('admin'), 'admin');
+  assert.equal(sanitizeBoardRole('superadmin', 'member'), 'member');
+});
+
+test('computeFlatOrderKeyRepairs - Reconcilia colisiones de columnas', () => {
+  const repairs = computeFlatOrderKeyRepairs([
+    { id: 'col-b', orderKey: 'a0' },
+    { id: 'col-a', orderKey: 'a0' },
+    { id: 'col-c', orderKey: 'a1' },
+  ]);
+  assert.equal(repairs.length, 1);
+  assert.equal(repairs[0].id, 'col-b');
+  assert.ok(repairs[0].orderKey > 'a0' && repairs[0].orderKey < 'a1');
+});
+
+test('sanitizeCardComment y validateBoardExportSnapshot', () => {
+  assert.equal(sanitizeCardComment({ id: 'cm-1', cardId: 'c1', authorId: 'u1', text: '   ' }), null);
+  const comment = sanitizeCardComment({
+    id: 'cm-1',
+    cardId: 'c1',
+    authorId: 'u1',
+    authorName: '  Alex  ',
+    authorColor: 'bad',
+    text: 'Hola **mundo**\u0000',
+    createdAt: 1000,
+  });
+  assert.deepEqual(comment, {
+    id: 'cm-1',
+    cardId: 'c1',
+    authorId: 'u1',
+    authorName: 'Alex',
+    authorColor: '#6366f1',
+    text: 'Hola **mundo**',
+    createdAt: 1000,
+  });
+
+  const snapshot = validateBoardExportSnapshot({
+    version: 1,
+    exportedAt: 1000,
+    title: '  Sprint 1  ',
+    columns: [{ id: 'col-1', title: 'Por Hacer', orderKey: 'a0', color: '#3b82f6', createdAt: 1000 }],
+    cards: [{ id: 'card-1', columnId: 'col-missing', title: 'Tarea 1', description: 'Desc', orderKey: 'a0', labels: [] }],
+    comments: [{ id: 'cm-1', cardId: 'card-1', authorId: 'u1', authorName: 'Alex', authorColor: '#3b82f6', text: 'Ok', createdAt: 1001 }],
+  });
+  assert.ok(snapshot);
+  assert.equal(snapshot.title, 'Sprint 1');
+  assert.equal(snapshot.cards[0].columnId, 'col-1');
+  assert.equal(snapshot.comments.length, 1);
+  assert.equal(validateBoardExportSnapshot({ version: 2, columns: [], cards: [] }), null);
+});
+
+test('sanitizeActivity acepta dragging-column y BOARD_TEMPLATES no fuerza color inicial', () => {
+  assert.deepEqual(
+    sanitizeActivity({ action: 'dragging-column', columnId: 'col-1' }),
+    { action: 'dragging-column', columnId: 'col-1' }
+  );
+  assert.equal(sanitizeActivity({ action: 'unknown-action' }), null);
+
+  for (const tpl of BOARD_TEMPLATES) {
+    for (const col of tpl.columns) {
+      assert.equal(col.color, undefined, `Columna ${col.title} de ${tpl.id} no debe tener color por defecto`);
+    }
+  }
 });

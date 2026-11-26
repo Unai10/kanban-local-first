@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -9,7 +9,21 @@ import {
   type SensorDescriptor,
   type SensorOptions,
 } from '@dnd-kit/core';
-import type { BoardMember, Card, Column, Label, UserPresence, UserProfile, CursorPosition, UserActivity } from '@kanban/shared-types';
+import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
+import { Plus, Check, X } from 'lucide-react';
+import {
+  LIMITS,
+  sanitizeSingleLineText,
+  type BoardMember,
+  type Card,
+  type CardComment,
+  type Column,
+  type Label,
+  type UserPresence,
+  type UserProfile,
+  type CursorPosition,
+  type UserActivity,
+} from '@kanban/shared-types';
 import { KanbanColumn } from '../../../components/KanbanColumn.js';
 import { KanbanCardView } from '../../../components/KanbanCard.js';
 import { CardModal } from '../../../components/Modals/CardModal.js';
@@ -20,7 +34,11 @@ import { useDesktopFinePointer } from '../../presence/hooks/useDesktopFinePointe
 
 interface Props {
   columns: Column[];
+  allCards: Card[];
   displayCards: Card[];
+  hasActiveFilters: boolean;
+  canManageColumns: boolean;
+  commentsByCardId: Map<string, CardComment[]>;
   collaborators: UserPresence[];
   boardMembers: BoardMember[];
   currentUser: UserProfile;
@@ -29,6 +47,7 @@ interface Props {
   sensors: SensorDescriptor<SensorOptions>[];
   collisionDetection: CollisionDetection;
   activeCard: Card | null;
+  activeColumn: Column | null;
   handleDragStart: (event: DragStartEvent) => void;
   handleDragOver: (event: DragOverEvent) => void;
   handleDragEnd: (event: DragEndEvent) => void;
@@ -42,6 +61,15 @@ interface Props {
   ) => void;
   deleteCard: (cardId: string) => void;
   updateCard: (cardId: string, updates: Partial<Card>) => void;
+  addColumn: (title: string, color?: string) => void;
+  updateColumn: (columnId: string, updates: Partial<Pick<Column, 'title' | 'color'>>) => void;
+  moveColumn: (columnId: string, prevKey?: string | null, nextKey?: string | null) => void;
+  deleteColumn: (columnId: string, targetColumnIdForCards?: string | null) => void;
+  addComment: (cardId: string, text: string) => void;
+  deleteComment: (commentId: string) => void;
+  createCardColumnId: string | null;
+  onOpenCreateCard: (colId: string) => void;
+  onCloseCreateCard: () => void;
   editingCard: Card | null;
   onSelectCard: (card: Card) => void;
   onCloseCardModal: () => void;
@@ -49,15 +77,19 @@ interface Props {
 
 export function KanbanCanvas({
   columns,
+  allCards,
   displayCards,
+  hasActiveFilters,
+  canManageColumns,
+  commentsByCardId,
   collaborators,
   boardMembers,
   currentUser,
   onUpdateCursor,
-  onUpdateActivity,
   sensors,
   collisionDetection,
   activeCard,
+  activeColumn,
   handleDragStart,
   handleDragOver,
   handleDragEnd,
@@ -65,13 +97,23 @@ export function KanbanCanvas({
   addCard,
   deleteCard,
   updateCard,
+  addColumn,
+  updateColumn,
+  moveColumn,
+  deleteColumn,
+  addComment,
+  deleteComment,
+  createCardColumnId,
+  onOpenCreateCard,
+  onCloseCreateCard,
   editingCard,
   onSelectCard,
   onCloseCardModal,
 }: Props) {
   const containerRef = useRef<HTMLElement | null>(null);
-  const [createCardColumnId, setCreateCardColumnId] = useState<string | null>(null);
   const [activeMobileColId, setActiveMobileColId] = useState<string | null>(null);
+  const [isAddingColumn, setIsAddingColumn] = useState(false);
+  const [newColumnTitle, setNewColumnTitle] = useState('');
   const isDesktopPointer = useDesktopFinePointer();
 
   useCursorBroadcast({
@@ -80,27 +122,37 @@ export function KanbanCanvas({
     enabled: isDesktopPointer,
   });
 
-  const cardsByColumn = useMemo(() => {
+  const { cardsByColumn, totalCardsByColumn } = useMemo(() => {
     const grouped = new Map<string, Card[]>();
+    const totals = new Map<string, number>();
     for (const col of columns) {
       grouped.set(col.id, []);
+      totals.set(col.id, 0);
+    }
+    const fallbackColId = columns[0]?.id;
+    for (const card of allCards) {
+      const targetId = totals.has(card.columnId) ? card.columnId : fallbackColId;
+      if (targetId) {
+        totals.set(targetId, (totals.get(targetId) ?? 0) + 1);
+      }
     }
     for (const card of displayCards) {
-      const list = grouped.get(card.columnId);
+      const list = grouped.get(card.columnId) ?? (fallbackColId ? grouped.get(fallbackColId) : undefined);
       if (list) {
         list.push(card);
       }
     }
-    return grouped;
-  }, [columns, displayCards]);
+    return { cardsByColumn: grouped, totalCardsByColumn: totals };
+  }, [columns, allCards, displayCards]);
 
+  // Calcular presencia/awareness sobre ALLCARDS sin filtrar para evitar fallos visuales al filtrar
   const cardColumnById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const card of displayCards) {
+    for (const card of allCards) {
       map.set(card.id, card.columnId);
     }
     return map;
-  }, [displayCards]);
+  }, [allCards]);
 
   const columnActivityColor = useMemo(() => {
     const map = new Map<string, string>();
@@ -115,6 +167,19 @@ export function KanbanCanvas({
     }
     return map;
   }, [collaborators, currentUser.id, cardColumnById]);
+
+  const commentsCountByCardId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [cardId, list] of commentsByCardId.entries()) {
+      counts.set(cardId, list.length);
+    }
+    return counts;
+  }, [commentsByCardId]);
+
+  const columnSortableIds = useMemo(
+    () => columns.map(col => `col-sort:${col.id}`),
+    [columns]
+  );
 
   const selectedMobileColId =
     activeMobileColId && columns.some(col => col.id === activeMobileColId)
@@ -155,14 +220,27 @@ export function KanbanCanvas({
     }
   }, []);
 
-  const handleOpenCreateCard = (colId: string) => {
-    setCreateCardColumnId(colId);
-    onUpdateActivity?.({ action: 'creating-card', columnId: colId });
-  };
+  const handleMoveColumnStep = useCallback((colId: string, direction: 'left' | 'right') => {
+    const idx = columns.findIndex(c => c.id === colId);
+    if (idx === -1) return;
+    if (direction === 'left' && idx > 0) {
+      const prev = idx - 2 >= 0 ? columns[idx - 2] : null;
+      const next = columns[idx - 1];
+      moveColumn(colId, prev?.orderKey ?? null, next?.orderKey ?? null);
+    } else if (direction === 'right' && idx < columns.length - 1) {
+      const prev = columns[idx + 1];
+      const next = idx + 2 < columns.length ? columns[idx + 2] : null;
+      moveColumn(colId, prev?.orderKey ?? null, next?.orderKey ?? null);
+    }
+  }, [columns, moveColumn]);
 
-  const handleCloseCreateCard = () => {
-    setCreateCardColumnId(null);
-    onUpdateActivity?.(null);
+  const handleCreateColumnSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const clean = sanitizeSingleLineText(newColumnTitle, LIMITS.COLUMN_TITLE_MAX, '');
+    if (!clean) return;
+    addColumn(clean);
+    setNewColumnTitle('');
+    setIsAddingColumn(false);
   };
 
   return (
@@ -184,7 +262,7 @@ export function KanbanCanvas({
                   onClick={() => handleSelectMobileColumn(column.id)}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap border transition shrink-0 ${
                     isSelected
-                      ? 'bg-primary/20 text-white border-primary/50'
+                      ? 'bg-primary/20 text-ink border-primary/50'
                       : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200'
                   }`}
                 >
@@ -209,7 +287,7 @@ export function KanbanCanvas({
           ref={containerRef}
           onScroll={handleCanvasScroll}
           className={`flex-1 p-3 sm:p-6 overflow-x-auto relative min-w-full ${
-            activeCard ? '' : 'snap-x snap-mandatory md:snap-none'
+            activeCard || activeColumn ? '' : 'snap-x snap-mandatory md:snap-none'
           }`}
         >
           <CollaboratorCursors
@@ -226,18 +304,88 @@ export function KanbanCanvas({
             onDragCancel={handleDragCancel}
           >
             <div className="flex items-start gap-3 sm:gap-6">
-              {columns.map(column => (
-                <KanbanColumn
-                  key={column.id}
-                  column={column}
-                  cards={cardsByColumn.get(column.id) ?? []}
-                  onOpenCreateCard={handleOpenCreateCard}
-                  onDeleteCard={deleteCard}
-                  onCardClick={onSelectCard}
-                  collaborators={collaborators}
-                  currentUserId={currentUser.id}
-                />
-              ))}
+              <SortableContext items={columnSortableIds} strategy={horizontalListSortingStrategy}>
+                {columns.map((column, idx) => (
+                  <KanbanColumn
+                    key={column.id}
+                    column={column}
+                    allColumns={columns}
+                    cards={cardsByColumn.get(column.id) ?? []}
+                    totalCardsInColumn={totalCardsByColumn.get(column.id) ?? 0}
+                    hasActiveFilters={hasActiveFilters}
+                    canManageColumns={canManageColumns}
+                    isFirstColumn={idx === 0}
+                    isLastColumn={idx === columns.length - 1}
+                    commentsCountByCardId={commentsCountByCardId}
+                    onOpenCreateCard={onOpenCreateCard}
+                    onDeleteCard={deleteCard}
+                    onCardClick={onSelectCard}
+                    onUpdateColumn={updateColumn}
+                    onDeleteColumn={deleteColumn}
+                    onMoveColumnStep={handleMoveColumnStep}
+                    collaborators={collaborators}
+                    currentUserId={currentUser.id}
+                  />
+                ))}
+              </SortableContext>
+
+              {canManageColumns && columns.length < LIMITS.MAX_COLUMNS_PER_BOARD && (
+                <div className="w-72 shrink-0">
+                  {isAddingColumn ? (
+                    <form
+                      onSubmit={handleCreateColumnSubmit}
+                      className="bg-slate-900/70 border border-slate-800 rounded-xl p-3 space-y-2"
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        maxLength={LIMITS.COLUMN_TITLE_MAX}
+                        value={newColumnTitle}
+                        onChange={e => setNewColumnTitle(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Escape') {
+                            setNewColumnTitle('');
+                            setIsAddingColumn(false);
+                          }
+                        }}
+                        placeholder="Nombre de la columna..."
+                        aria-label="Nombre de la nueva columna"
+                        className="w-full bg-slate-950 border border-primary text-slate-100 text-xs px-2.5 py-2 rounded-lg focus:outline-none"
+                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewColumnTitle('');
+                            setIsAddingColumn(false);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-ink rounded"
+                          aria-label="Cancelar nueva columna"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!newColumnTitle.trim()}
+                          className="flex items-center gap-1 text-xs bg-primary hover:bg-blue-600 disabled:opacity-40 text-white font-medium px-3 py-1.5 rounded-lg transition"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          Añadir
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingColumn(true)}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-dashed border-slate-700 bg-slate-900/30 hover:bg-slate-900/70 text-slate-400 hover:text-ink text-xs font-medium transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Añadir columna
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <DragOverlay dropAnimation={null}>
@@ -245,12 +393,22 @@ export function KanbanCanvas({
                 <div className="cursor-grabbing rotate-1 scale-105 shadow-2xl">
                   <KanbanCardView
                     card={activeCard}
+                    commentsCount={commentsCountByCardId.get(activeCard.id) ?? 0}
                     isOverlay
                     onDelete={() => {}}
                     onClick={() => {}}
                     collaborators={collaborators}
                     currentUserId={currentUser.id}
                   />
+                </div>
+              ) : activeColumn ? (
+                <div className="w-80 bg-surface border border-primary rounded-xl p-3 shadow-2xl opacity-95">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sm text-ink truncate">{activeColumn.title}</span>
+                    <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">
+                      {totalCardsByColumn.get(activeColumn.id) ?? 0}
+                    </span>
+                  </div>
                 </div>
               ) : null}
             </DragOverlay>
@@ -265,19 +423,22 @@ export function KanbanCanvas({
         collaborators={collaborators}
         boardMembers={boardMembers}
         currentUser={currentUser}
-        onClose={handleCloseCreateCard}
+        onClose={onCloseCreateCard}
         onCreateCard={addCard}
       />
 
       <CardModal
         card={editingCard}
         columns={columns}
+        comments={editingCard ? (commentsByCardId.get(editingCard.id) ?? []) : []}
         collaborators={collaborators}
         boardMembers={boardMembers}
         currentUser={currentUser}
         onClose={onCloseCardModal}
         onUpdate={updateCard}
         onDelete={deleteCard}
+        onAddComment={addComment}
+        onDeleteComment={deleteComment}
       />
     </>
   );

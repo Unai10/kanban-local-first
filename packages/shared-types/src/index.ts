@@ -1,6 +1,7 @@
 // Domain models
 export * from './domain/card.js';
 export * from './domain/board.js';
+export * from './domain/boardTemplates.js';
 export * from './domain/user.js';
 
 // Fractional Indexing algorithms and canonical comparators

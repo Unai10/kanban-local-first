@@ -9,6 +9,7 @@ import {
   WS_MESSAGE_TYPE,
   WS_CLOSE_CODE,
   LIMITS,
+  sanitizeSingleLineText,
   type ServerBoardMetaPayload,
 } from '@kanban/shared-types';
 import type { BoardRepository } from '../infrastructure/db/boardRepository.js';
@@ -40,6 +41,7 @@ function parseWsCredentials(req: http.IncomingMessage, url: URL): {
   inviteToken: string;
   ownerToken: string;
   joinCode: string;
+  userId: string;
   title: string;
   ownerId: string;
   ownerName: string;
@@ -62,12 +64,16 @@ function parseWsCredentials(req: http.IncomingMessage, url: URL): {
     }
   }
 
+  const ownerId = sanitizeSingleLineText(url.searchParams.get('ownerId') || '', 64);
+  const userId = sanitizeSingleLineText(url.searchParams.get('userId') || ownerId, 64);
+
   return {
     inviteToken,
     ownerToken,
     joinCode,
+    userId,
     title: (url.searchParams.get('title') || 'Tablero Kanban').trim(),
-    ownerId: (url.searchParams.get('ownerId') || '').trim(),
+    ownerId,
     ownerName: (url.searchParams.get('ownerName') || '').trim(),
   };
 }
@@ -108,6 +114,7 @@ export function createWsConnectionHandler(deps: WsHandlerDeps) {
       inviteToken: creds.inviteToken,
       ownerToken: creds.ownerToken,
       joinCode: creds.joinCode,
+      userId: creds.userId,
       ownerId: creds.ownerId,
       ownerName: creds.ownerName,
     });
@@ -122,7 +129,7 @@ export function createWsConnectionHandler(deps: WsHandlerDeps) {
       return;
     }
 
-    const room = roomManager.addConnection(roomName, conn, auth.role);
+    const room = roomManager.addConnection(roomName, conn, auth.role, creds.userId);
 
     (conn as WebSocket & { isAlive?: boolean }).isAlive = true;
     conn.on('pong', () => {
@@ -186,9 +193,31 @@ export function createWsConnectionHandler(deps: WsHandlerDeps) {
         if (messageType === WS_MESSAGE_TYPE.SYNC) {
           const replyEncoder = encoding.createEncoder();
           encoding.writeVarUint(replyEncoder, WS_MESSAGE_TYPE.SYNC);
-          syncProtocol.readSyncMessage(decoder, replyEncoder, room.doc, conn);
+          const columnsReverted = roomManager.applyAuthorizedSyncMessage(
+            roomName,
+            conn,
+            decoder,
+            replyEncoder
+          );
           if (encoding.length(replyEncoder) > 1) {
             conn.send(encoding.toUint8Array(replyEncoder));
+          }
+
+          if (columnsReverted) {
+            const latestBoard = boardRepo.getBoard(roomName);
+            const revertMeta: ServerBoardMetaPayload = {
+              boardId: roomName,
+              title: latestBoard?.title || auth.title || 'Tablero Kanban',
+              ownerId: latestBoard?.ownerId || auth.ownerId || '',
+              ownerName: latestBoard?.ownerName || auth.ownerName || 'Propietario',
+              joinCode: latestBoard?.joinCode ?? auth.joinCode,
+              role: room.connRoles.get(conn) ?? 'member',
+              columnsReverted: true,
+            };
+            const revertMetaEncoder = encoding.createEncoder();
+            encoding.writeVarUint(revertMetaEncoder, WS_MESSAGE_TYPE.BOARD_META);
+            encoding.writeVarString(revertMetaEncoder, JSON.stringify(revertMeta));
+            conn.send(encoding.toUint8Array(revertMetaEncoder));
           }
 
           if (

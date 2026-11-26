@@ -11,6 +11,7 @@ import {
   isValidTokenFormat,
   normalizeJoinCode,
   sanitizeSingleLineText,
+  type AssignableBoardRole,
   type BoardMetaSyncItem,
   type BoardMetaSyncRequestItem,
 } from '@kanban/shared-types';
@@ -59,6 +60,10 @@ export type UpdateBoardTitleResult =
   | { ok: true; board: BoardRecord }
   | { ok: false; reason: 'invalid_input' | 'forbidden' | 'not_found' };
 
+export type SetBoardMemberRoleResult =
+  | { ok: true; board: BoardRecord; userId: string; role: AssignableBoardRole }
+  | { ok: false; reason: 'invalid_input' | 'forbidden' | 'not_found' };
+
 function hashToken(token: string): Buffer {
   return crypto.createHash('sha256').update(token, 'utf8').digest();
 }
@@ -80,15 +85,23 @@ export interface BoardRepository {
     inviteToken: string;
     ownerToken?: string;
     joinCode?: string;
+    userId?: string;
     ownerId?: string;
     ownerName?: string;
   }): AuthorizeResult;
   findBoardByJoinCode(code: string): FindByJoinCodeResult;
   verifyBoardAccess(
     boardId: string,
-    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string }
+    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string; userId?: string }
   ): VerifyBoardAccessResult;
   updateBoardTitle(boardId: string, ownerToken: string, title: string): UpdateBoardTitleResult;
+  setBoardMemberRole(
+    boardId: string,
+    ownerToken: string,
+    targetUserId: string,
+    role: AssignableBoardRole
+  ): SetBoardMemberRoleResult;
+  removeBoardMemberRole(boardId: string, userId: string): void;
   updateOwnerNameForBoards(
     ownerId: string,
     ownerName: string,
@@ -146,6 +159,14 @@ export function createBoardRepository(dbPath: string): BoardRepository {
       deleted_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_deleted_join_code ON deleted_boards(join_code);
+
+    CREATE TABLE IF NOT EXISTS board_roles (
+      board_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('admin', 'member')),
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (board_id, user_id)
+    );
   `);
 
   const insertBoardStmt = db.prepare<[string, string, Buffer, Buffer, string, string, string, number]>(`
@@ -210,6 +231,24 @@ export function createBoardRepository(dbPath: string): BoardRepository {
 
   const deleteUpdatesByRoomStmt = db.prepare<[string]>(`
     DELETE FROM document_updates WHERE room_name = ?
+  `);
+
+  const getBoardRoleStmt = db.prepare<[string, string], { role: AssignableBoardRole }>(`
+    SELECT role FROM board_roles WHERE board_id = ? AND user_id = ?
+  `);
+
+  const upsertBoardRoleStmt = db.prepare<[string, string, AssignableBoardRole, number]>(`
+    INSERT INTO board_roles (board_id, user_id, role, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(board_id, user_id) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at
+  `);
+
+  const deleteBoardRoleStmt = db.prepare<[string, string]>(`
+    DELETE FROM board_roles WHERE board_id = ? AND user_id = ?
+  `);
+
+  const deleteBoardRolesByBoardStmt = db.prepare<[string]>(`
+    DELETE FROM board_roles WHERE board_id = ?
   `);
 
   function allocateJoinCode(preferred?: string): string {
@@ -289,6 +328,7 @@ export function createBoardRepository(dbPath: string): BoardRepository {
     inviteToken: string;
     ownerToken?: string;
     joinCode?: string;
+    userId?: string;
     ownerId?: string;
     ownerName?: string;
   }): AuthorizeResult {
@@ -342,9 +382,16 @@ export function createBoardRepository(dbPath: string): BoardRepository {
     return { valid: false, reason: 'forbidden' };
   }
 
+  function resolveMemberRole(boardId: string, userId?: string): BoardRole {
+    const cleanUserId = sanitizeSingleLineText(userId, 64);
+    if (!cleanUserId) return 'member';
+    const row = getBoardRoleStmt.get(boardId, cleanUserId);
+    return row?.role === 'admin' ? 'admin' : 'member';
+  }
+
   function verifyBoardCredential(
-    existing: { owner_token_hash: Buffer; invite_token_hash: Buffer; join_code: string },
-    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string }
+    existing: { id: string; owner_token_hash: Buffer; invite_token_hash: Buffer; join_code: string },
+    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string; userId?: string }
   ): BoardRole | null {
     if (creds.ownerToken && isValidTokenFormat(creds.ownerToken)) {
       const providedOwnerHash = hashToken(creds.ownerToken);
@@ -356,14 +403,14 @@ export function createBoardRepository(dbPath: string): BoardRepository {
     if (creds.inviteToken && isValidTokenFormat(creds.inviteToken)) {
       const providedInviteHash = hashToken(creds.inviteToken);
       if (timingSafeEqualBuffer(providedInviteHash, existing.invite_token_hash)) {
-        return 'member';
+        return resolveMemberRole(existing.id, creds.userId);
       }
     }
 
     if (creds.joinCode) {
       const normalized = normalizeJoinCode(creds.joinCode);
       if (isValidJoinCode(normalized) && timingSafeEqualString(normalized, existing.join_code)) {
-        return 'member';
+        return resolveMemberRole(existing.id, creds.userId);
       }
     }
 
@@ -375,7 +422,7 @@ export function createBoardRepository(dbPath: string): BoardRepository {
    */
   function verifyBoardAccess(
     boardId: string,
-    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string }
+    creds: { ownerToken?: string; inviteToken?: string; joinCode?: string; userId?: string }
   ): VerifyBoardAccessResult {
     if (!ROOM_NAME_REGEX.test(boardId)) {
       return { valid: false, reason: 'forbidden' };
@@ -440,6 +487,64 @@ export function createBoardRepository(dbPath: string): BoardRepository {
         createdAt: existing.created_at,
       },
     };
+  }
+
+  function setBoardMemberRole(
+    boardId: string,
+    ownerToken: string,
+    rawTargetUserId: string,
+    role: AssignableBoardRole
+  ): SetBoardMemberRoleResult {
+    if (!ROOM_NAME_REGEX.test(boardId)) {
+      return { ok: false, reason: 'invalid_input' };
+    }
+    if (!isValidTokenFormat(ownerToken)) {
+      return { ok: false, reason: 'forbidden' };
+    }
+    const targetUserId = sanitizeSingleLineText(rawTargetUserId, 64);
+    if (!targetUserId || (role !== 'admin' && role !== 'member')) {
+      return { ok: false, reason: 'invalid_input' };
+    }
+
+    const existing = getBoardRowStmt.get(boardId);
+    if (!existing) {
+      return { ok: false, reason: 'not_found' };
+    }
+
+    const providedHash = hashToken(ownerToken);
+    if (!timingSafeEqualBuffer(providedHash, existing.owner_token_hash)) {
+      return { ok: false, reason: 'forbidden' };
+    }
+
+    if (targetUserId === existing.owner_id) {
+      return { ok: false, reason: 'invalid_input' };
+    }
+
+    if (role === 'admin') {
+      upsertBoardRoleStmt.run(boardId, targetUserId, 'admin', Date.now());
+    } else {
+      deleteBoardRoleStmt.run(boardId, targetUserId);
+    }
+
+    return {
+      ok: true,
+      board: {
+        id: existing.id,
+        title: existing.title,
+        ownerId: existing.owner_id,
+        ownerName: existing.owner_name,
+        joinCode: existing.join_code,
+        createdAt: existing.created_at,
+      },
+      userId: targetUserId,
+      role,
+    };
+  }
+
+  function removeBoardMemberRole(boardId: string, userId: string): void {
+    const cleanUserId = sanitizeSingleLineText(userId, 64);
+    if (!ROOM_NAME_REGEX.test(boardId) || !cleanUserId) return;
+    deleteBoardRoleStmt.run(boardId, cleanUserId);
   }
 
   function updateOwnerNameForBoards(
@@ -556,6 +661,7 @@ export function createBoardRepository(dbPath: string): BoardRepository {
     db.transaction(() => {
       deleteBoardStmt.run(boardId);
       deleteUpdatesByRoomStmt.run(boardId);
+      deleteBoardRolesByBoardStmt.run(boardId);
       insertDeletedBoardStmt.run(boardId, existing.join_code, now);
     })();
 
@@ -622,6 +728,8 @@ export function createBoardRepository(dbPath: string): BoardRepository {
     findBoardByJoinCode,
     verifyBoardAccess,
     updateBoardTitle,
+    setBoardMemberRole,
+    removeBoardMemberRole,
     updateOwnerNameForBoards,
     getBoardsMetadata,
     deleteBoard,

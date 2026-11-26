@@ -194,3 +194,51 @@ test('Seguridad - Sanitización estricta de nombres de sala (ROOM_NAME_REGEX)', 
   assert.equal(ROOM_NAME_REGEX.test('board<script>'), false);
   assert.equal(ROOM_NAME_REGEX.test('ab'), false);
 });
+
+test('BoardRepository - Gestión de roles admin/member y limpieza', () => {
+  const repo = createBoardRepository(':memory:');
+  try {
+    const boardId = 'board-roles-1';
+    const inviteToken = generateSecureToken();
+    const ownerToken = generateSecureToken();
+
+    repo.registerBoard({
+      boardId,
+      title: 'Roles Board',
+      inviteToken,
+      ownerToken,
+      ownerId: 'usr-owner',
+      ownerName: 'Owner',
+    });
+
+    // Colaborador sin rol asignado entra como member
+    const initialAuth = repo.authorizeOrRegisterBoard({
+      boardId,
+      inviteToken,
+      userId: 'usr-collab',
+    });
+    assert.equal(initialAuth.valid, true);
+    assert.equal(initialAuth.role, 'member');
+
+    // Solo el propietario puede asignar admin
+    const forbid = repo.setBoardMemberRole(boardId, inviteToken, 'usr-collab', 'admin');
+    assert.deepEqual(forbid, { ok: false, reason: 'forbidden' });
+
+    const selfDemote = repo.setBoardMemberRole(boardId, ownerToken, 'usr-owner', 'admin');
+    assert.deepEqual(selfDemote, { ok: false, reason: 'invalid_input' });
+
+    const promoted = repo.setBoardMemberRole(boardId, ownerToken, 'usr-collab', 'admin');
+    assert.equal(promoted.ok, true);
+    assert.equal(repo.authorizeOrRegisterBoard({ boardId, inviteToken, userId: 'usr-collab' }).role, 'admin');
+
+    const meta = repo.getBoardsMetadata([{ boardId, inviteToken, userId: 'usr-collab' }]);
+    assert.equal(meta[0].role, 'admin');
+
+    // Revocar rol vuelve a member
+    const demoted = repo.setBoardMemberRole(boardId, ownerToken, 'usr-collab', 'member');
+    assert.equal(demoted.ok, true);
+    assert.equal(repo.authorizeOrRegisterBoard({ boardId, inviteToken, userId: 'usr-collab' }).role, 'member');
+  } finally {
+    repo.close();
+  }
+});

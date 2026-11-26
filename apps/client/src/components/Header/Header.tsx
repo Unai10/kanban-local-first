@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { Sparkles, Menu, Share2, Pencil, Check, X } from 'lucide-react';
-import { LIMITS, sanitizeSingleLineText, type UserPresence, type UserProfile } from '@kanban/shared-types';
+import { Sparkles, Menu, Share2, Pencil, Check, X, Shield, BarChart3, Sun, Moon, Keyboard } from 'lucide-react';
+import { LIMITS, sanitizeSingleLineText, type BoardRole, type UserPresence, type UserProfile } from '@kanban/shared-types';
 import type { SyncStatus } from '../../core/yjs/YjsRoomClient.js';
+import type { AppTheme } from '../../features/boards/context/BoardContext.js';
 import { SyncBadge } from './SyncBadge';
 import { CollaboratorsList } from './CollaboratorsList';
 import { InstallButton } from './InstallButton';
@@ -9,14 +10,19 @@ import { InstallButton } from './InstallButton';
 interface Props {
   boardId: string;
   boardTitle: string;
-  role?: 'owner' | 'member';
+  role?: BoardRole;
   ownerName?: string;
   collaborators: UserPresence[];
   currentUser: UserProfile;
   syncStatus: SyncStatus;
+  theme: AppTheme;
+  onToggleTheme: () => void;
   onOpenSidebar: () => void;
   onOpenShareModal: () => void;
   onOpenProfileModal: () => void;
+  onOpenRolesModal: () => void;
+  onOpenMetricsModal: () => void;
+  onOpenShortcutsModal: () => void;
   onRenameBoard?: (newTitle: string) => void;
 }
 
@@ -77,7 +83,7 @@ function BoardTitleDisplay({
             setIsEditing(false);
           }}
           aria-label="Cancelar edición de nombre"
-          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition shrink-0"
+          className="p-1 text-slate-400 hover:text-ink hover:bg-slate-800 rounded transition shrink-0"
           title="Cancelar"
         >
           <X className="w-3.5 h-3.5" />
@@ -117,9 +123,14 @@ export function Header({
   collaborators,
   currentUser,
   syncStatus,
+  theme,
+  onToggleTheme,
   onOpenSidebar,
   onOpenShareModal,
   onOpenProfileModal,
+  onOpenRolesModal,
+  onOpenMetricsModal,
+  onOpenShortcutsModal,
   onRenameBoard,
 }: Props) {
   const initialLetter = (currentUser.name || '?').charAt(0).toUpperCase();
@@ -131,7 +142,7 @@ export function Header({
           type="button"
           onClick={onOpenSidebar}
           aria-label="Ver tableros"
-          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors shrink-0"
+          className="p-1.5 rounded-lg text-slate-400 hover:text-ink hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors shrink-0"
           title="Ver tableros"
         >
           <Menu className="w-5 h-5" />
@@ -152,6 +163,13 @@ export function Header({
               <span className="hidden md:inline-block text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0">
                 (Tú eres el propietario)
               </span>
+            ) : role === 'admin' ? (
+              <span
+                className="hidden md:inline-block text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0"
+                title={`Propietario: ${ownerName || 'Colaborador'} · Puedes gestionar columnas`}
+              >
+                Admin · Dueño: {ownerName || 'Colaborador'}
+              </span>
             ) : (
               <span
                 className="hidden md:inline-block text-[10px] font-medium bg-slate-800 text-slate-300 border border-slate-700 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0"
@@ -165,7 +183,29 @@ export function Header({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onOpenMetricsModal}
+          aria-label="Resumen y métricas del tablero"
+          title="Resumen y métricas"
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-800 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+        >
+          <BarChart3 className="w-3.5 h-3.5 text-primary" />
+          <span className="hidden lg:inline">Resumen</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenRolesModal}
+          aria-label="Miembros y roles"
+          title={role === 'owner' ? 'Gestionar roles de miembros' : 'Ver miembros y roles'}
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-800 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+        >
+          <Shield className="w-3.5 h-3.5 text-amber-400" />
+          <span className="hidden lg:inline">Roles</span>
+        </button>
+
         <button
           type="button"
           onClick={onOpenShareModal}
@@ -175,6 +215,26 @@ export function Header({
         >
           <Share2 className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Compartir</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+          title={theme === 'dark' ? 'Tema claro' : 'Tema oscuro'}
+          className="p-1.5 rounded-lg text-slate-400 hover:text-ink hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors"
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4 text-primary" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenShortcutsModal}
+          aria-label="Atajos de teclado"
+          title="Atajos de teclado (?)"
+          className="hidden sm:inline-flex p-1.5 rounded-lg text-slate-400 hover:text-ink hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors"
+        >
+          <Keyboard className="w-4 h-4" />
         </button>
 
         <InstallButton />

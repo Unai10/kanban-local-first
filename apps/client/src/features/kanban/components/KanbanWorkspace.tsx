@@ -1,11 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { useBoardContext } from '../../boards/context/useBoardContext.js';
 import { useKanbanRoom } from '../hooks/useKanbanRoom.js';
+import { INITIAL_BOARD_FILTERS, useBoardFilters } from '../hooks/useBoardFilters.js';
+import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts.js';
 import { useKanbanDnd } from '../../dnd/hooks/useKanbanDnd.js';
 import { BoardHeaderContainer } from '../../boards/components/BoardHeaderContainer.js';
 import { BoardModalsContainer } from '../../boards/components/BoardModalsContainer.js';
+import { BoardFilterBar } from './BoardFilterBar.js';
 import { KanbanCanvas } from './KanbanCanvas.js';
+import { UndoToast } from '../../../components/UndoToast.js';
+import { RolesModal } from '../../../components/Modals/RolesModal.js';
+import { BoardMetricsModal } from '../../../components/Modals/BoardMetricsModal.js';
+import { ShortcutsHelpModal } from '../../../components/Modals/ShortcutsHelpModal.js';
+import { downloadBoardAsJson, downloadBoardAsMarkdown } from '../../../core/utils/boardExport.js';
 
 export function KanbanWorkspace() {
   const {
@@ -13,22 +21,53 @@ export function KanbanWorkspace() {
     currentUser,
     notification,
     dismissNotification,
+    isSidebarOpen,
+    isShareModalOpen,
+    isCreateBoardModalOpen,
+    isJoinModalOpen,
+    isProfileModalOpen,
+    isRolesModalOpen,
+    isMetricsModalOpen,
+    isShortcutsModalOpen,
+    closeRolesModal,
+    closeMetricsModal,
+    openShortcutsModal,
+    closeShortcutsModal,
+    updateMemberRole,
     handleRemoteBoardDeleted,
     handleAuthError,
     handleOwnerResolved,
   } = useBoardContext();
+
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [createCardColumnId, setCreateCardColumnId] = useState<string | null>(null);
+  const [undoDeleteCard, setUndoDeleteCard] = useState<{ id: string; title: string } | null>(null);
+  const [dragNotice, setDragNotice] = useState<string | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
+  const dragNoticeTimerRef = useRef<number | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const canManageColumns = boardInfo.role === 'owner' || boardInfo.role === 'admin';
 
   const {
     columns,
     cards,
     boardMembers,
+    commentsByCardId,
     syncStatus,
     collaborators,
     addCard,
     updateCard,
     moveCard,
     deleteCard,
+    restoreCard,
+    addColumn,
+    updateColumn,
+    moveColumn,
+    deleteColumn,
+    addComment,
+    deleteComment,
+    buildExportSnapshot,
     updateCursor,
     updateActivity,
   } = useKanbanRoom({
@@ -38,13 +77,25 @@ export function KanbanWorkspace() {
     inviteToken: boardInfo.inviteToken,
     ownerToken: boardInfo.ownerToken,
     joinCode: boardInfo.joinCode,
+    userRole: boardInfo.role,
     initialOwnerId: boardInfo.ownerId,
     initialOwnerName: boardInfo.ownerName,
     seedDemoCards: boardInfo.seedDemoCards,
+    initialTemplateId: boardInfo.initialTemplateId,
+    initialImportSnapshot: boardInfo.initialImportSnapshot,
     onBoardDeleted: handleRemoteBoardDeleted,
     onAuthError: handleAuthError,
     onOwnerResolved: handleOwnerResolved,
   });
+
+  const {
+    filters,
+    setFilters,
+    filteredCards,
+    activeFilterCount,
+    hasActiveFilters,
+    clearFilters,
+  } = useBoardFilters(cards, currentUser.id);
 
   const editingCard = editingCardId ? (cards.find(c => c.id === editingCardId) ?? null) : null;
 
@@ -54,16 +105,110 @@ export function KanbanWorkspace() {
     }
   }, [editingCardId, editingCard, updateActivity]);
 
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current !== null) {
+        window.clearTimeout(undoTimerRef.current);
+      }
+      if (dragNoticeTimerRef.current !== null) {
+        window.clearTimeout(dragNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleDragAborted = useCallback((reason: string) => {
+    setDragNotice(reason);
+    if (dragNoticeTimerRef.current !== null) {
+      window.clearTimeout(dragNoticeTimerRef.current);
+    }
+    dragNoticeTimerRef.current = window.setTimeout(() => {
+      setDragNotice(null);
+      dragNoticeTimerRef.current = null;
+    }, 5000);
+  }, []);
+
+  const handleDeleteCardWithUndo = useCallback((cardId: string) => {
+    const target = cards.find(c => c.id === cardId);
+    deleteCard(cardId);
+    if (!target) return;
+
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+    }
+    setUndoDeleteCard({ id: target.id, title: target.title });
+    undoTimerRef.current = window.setTimeout(() => {
+      setUndoDeleteCard(null);
+      undoTimerRef.current = null;
+    }, 6000);
+  }, [cards, deleteCard]);
+
+  const handleUndoDelete = useCallback(() => {
+    if (!undoDeleteCard) return;
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    restoreCard(undoDeleteCard.id);
+    setUndoDeleteCard(null);
+  }, [undoDeleteCard, restoreCard]);
+
+  const handleOpenCreateCard = useCallback((colId: string) => {
+    setCreateCardColumnId(colId);
+    updateActivity({ action: 'creating-card', columnId: colId });
+  }, [updateActivity]);
+
+  const handleCloseCreateCard = useCallback(() => {
+    setCreateCardColumnId(null);
+    updateActivity(null);
+  }, [updateActivity]);
+
+  const isAnyModalOpen = Boolean(
+    editingCard ||
+    createCardColumnId !== null ||
+    isSidebarOpen ||
+    isShareModalOpen ||
+    isCreateBoardModalOpen ||
+    isJoinModalOpen ||
+    isProfileModalOpen ||
+    isRolesModalOpen ||
+    isMetricsModalOpen ||
+    isShortcutsModalOpen
+  );
+
+  useGlobalShortcuts({
+    isModalOpen: isAnyModalOpen,
+    onFocusSearch: () => searchInputRef.current?.focus(),
+    onOpenNewCard: () => {
+      if (columns[0]) handleOpenCreateCard(columns[0].id);
+    },
+    onToggleHelp: () => {
+      if (isShortcutsModalOpen) closeShortcutsModal();
+      else openShortcutsModal();
+    },
+  });
+
   const {
     sensors,
     activeCard,
+    activeColumn,
     displayCards,
     collisionDetection,
     handleDragStart,
     handleDragOver,
     handleDragEnd,
     handleDragCancel,
-  } = useKanbanDnd({ cards, columns, moveCard, onUpdateActivity: updateActivity });
+  } = useKanbanDnd({
+    cards,
+    visibleCards: filteredCards,
+    columns,
+    canManageColumns,
+    moveCard,
+    moveColumn,
+    onUpdateActivity: updateActivity,
+    onDragAborted: handleDragAborted,
+  });
+
+  const activeAlertMessage = notification ?? dragNotice;
 
   return (
     <div className="min-h-dvh bg-background flex flex-col">
@@ -72,20 +217,34 @@ export function KanbanWorkspace() {
         syncStatus={syncStatus}
       />
 
-      {notification && (
+      <BoardFilterBar
+        filters={filters}
+        onChange={setFilters}
+        onClear={clearFilters}
+        activeFilterCount={activeFilterCount}
+        totalCards={cards.length}
+        visibleCards={filteredCards.length}
+        cards={cards}
+        searchInputRef={searchInputRef}
+      />
+
+      {activeAlertMessage && (
         <div
           role="alert"
           className="bg-amber-500/20 border-b border-amber-500/40 text-amber-200 px-3 sm:px-6 py-2 sm:py-2.5 text-xs flex items-center justify-between gap-2 animate-in fade-in"
         >
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{notification}</span>
+            <span>{activeAlertMessage}</span>
           </div>
           <button
             type="button"
-            onClick={dismissNotification}
+            onClick={() => {
+              if (notification) dismissNotification();
+              else setDragNotice(null);
+            }}
             aria-label="Cerrar aviso"
-            className="p-1 text-amber-400 hover:text-white rounded hover:bg-amber-500/30 transition"
+            className="p-1 text-amber-400 hover:text-ink rounded hover:bg-amber-500/30 transition"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -94,7 +253,11 @@ export function KanbanWorkspace() {
 
       <KanbanCanvas
         columns={columns}
+        allCards={cards}
         displayCards={displayCards}
+        hasActiveFilters={hasActiveFilters}
+        canManageColumns={canManageColumns}
+        commentsByCardId={commentsByCardId}
         collaborators={collaborators}
         boardMembers={boardMembers}
         currentUser={currentUser}
@@ -103,13 +266,23 @@ export function KanbanWorkspace() {
         sensors={sensors}
         collisionDetection={collisionDetection}
         activeCard={activeCard}
+        activeColumn={activeColumn}
         handleDragStart={handleDragStart}
         handleDragOver={handleDragOver}
         handleDragEnd={handleDragEnd}
         handleDragCancel={handleDragCancel}
         addCard={addCard}
-        deleteCard={deleteCard}
+        deleteCard={handleDeleteCardWithUndo}
         updateCard={updateCard}
+        addColumn={addColumn}
+        updateColumn={updateColumn}
+        moveColumn={moveColumn}
+        deleteColumn={deleteColumn}
+        addComment={addComment}
+        deleteComment={deleteComment}
+        createCardColumnId={createCardColumnId}
+        onOpenCreateCard={handleOpenCreateCard}
+        onCloseCreateCard={handleCloseCreateCard}
         editingCard={editingCard}
         onSelectCard={card => {
           setEditingCardId(card.id);
@@ -121,7 +294,45 @@ export function KanbanWorkspace() {
         }}
       />
 
-      <BoardModalsContainer />
+      <BoardModalsContainer
+        onExportJson={() => downloadBoardAsJson(buildExportSnapshot(boardInfo.title))}
+        onExportMarkdown={() => downloadBoardAsMarkdown(buildExportSnapshot(boardInfo.title))}
+      />
+
+      <RolesModal
+        isOpen={isRolesModalOpen}
+        onClose={closeRolesModal}
+        boardId={boardInfo.boardId}
+        boardTitle={boardInfo.title}
+        currentRole={boardInfo.role}
+        ownerId={boardInfo.ownerId}
+        ownerName={boardInfo.ownerName}
+        currentUser={currentUser}
+        boardMembers={boardMembers}
+        collaborators={collaborators}
+        isOffline={syncStatus === 'offline'}
+        onUpdateMemberRole={updateMemberRole}
+      />
+
+      <BoardMetricsModal
+        isOpen={isMetricsModalOpen}
+        onClose={closeMetricsModal}
+        boardTitle={boardInfo.title}
+        columns={columns}
+        cards={cards}
+        onApplyQuickFilter={partial => setFilters({ ...INITIAL_BOARD_FILTERS, ...partial })}
+      />
+
+      <ShortcutsHelpModal
+        isOpen={isShortcutsModalOpen}
+        onClose={closeShortcutsModal}
+      />
+
+      <UndoToast
+        cardTitle={undoDeleteCard?.title ?? null}
+        onUndo={handleUndoDelete}
+        onDismiss={() => setUndoDeleteCard(null)}
+      />
     </div>
   );
 }

@@ -60,18 +60,34 @@ function CreateCardModalContent({
   const [assignee, setAssignee] = useState<CardAssignee | null>(null);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
 
+  const effectiveColumnId = columns.some(c => c.id === columnId)
+    ? columnId
+    : (columns[0]?.id ?? '');
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && title.trim()) {
+        e.preventDefault();
+        onCreateCard(effectiveColumnId, title.trim(), description.trim(), labels, {
+          priority,
+          dueDate,
+          assignee,
+          checklist,
+          storyPoints,
+        });
+        onClose();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, title, description, effectiveColumnId, labels, priority, dueDate, assignee, checklist, storyPoints, onCreateCard]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    onCreateCard(columnId || columns[0]?.id, title.trim(), description.trim(), labels, {
+    onCreateCard(effectiveColumnId, title.trim(), description.trim(), labels, {
       priority,
       dueDate,
       assignee,
@@ -99,7 +115,7 @@ function CreateCardModalContent({
               <Plus className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h3 id="create-card-modal-title" className="text-sm font-semibold text-white truncate">Nueva Tarjeta</h3>
+              <h3 id="create-card-modal-title" className="text-sm font-semibold text-ink truncate">Nueva Tarjeta</h3>
               <p className="text-xs text-slate-400 truncate">Añade una tarjeta con sus detalles al tablero</p>
             </div>
           </div>
@@ -107,7 +123,7 @@ function CreateCardModalContent({
             onClick={onClose}
             type="button"
             aria-label="Cerrar modal de nueva tarjeta"
-            className="text-slate-400 hover:text-white p-1.5 -mr-1 rounded-lg hover:bg-slate-800 transition shrink-0"
+            className="text-slate-400 hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-slate-800 transition shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -125,7 +141,7 @@ function CreateCardModalContent({
                 maxLength={LIMITS.CARD_TITLE_MAX}
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 text-white font-medium text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary"
+                className="w-full bg-slate-900 border border-slate-700 text-ink font-medium text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary"
                 placeholder="Ej: Diseñar flujo de autenticación..."
                 autoFocus
               />
@@ -137,7 +153,7 @@ function CreateCardModalContent({
               </label>
               <select
                 id="create-card-column"
-                value={columnId}
+                value={effectiveColumnId}
                 onChange={e => setColumnId(e.target.value)}
                 className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-3 py-2 rounded-lg w-full focus:outline-none focus:border-primary"
               >

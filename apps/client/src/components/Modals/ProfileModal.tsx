@@ -47,7 +47,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
           type="button"
           onClick={onClose}
           aria-label="Cerrar editor de perfil"
-          className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+          className="absolute top-4 right-4 text-slate-400 hover:text-ink p-1 rounded-lg hover:bg-slate-800 transition"
         >
           <X className="w-5 h-5" />
         </button>
@@ -60,7 +60,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
             <UserCheck className="w-4 h-4" />
           </div>
           <div>
-            <h3 id="profile-modal-title" className="text-sm font-semibold text-white">
+            <h3 id="profile-modal-title" className="text-sm font-semibold text-ink">
               Tu Perfil Local
             </h3>
             <p className="text-[11px] text-slate-400 font-mono truncate max-w-[230px]">
@@ -81,7 +81,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Tu nombre..."
-            className="w-full bg-slate-900 border border-slate-700 text-white text-sm px-3 py-2 rounded-lg mb-4 focus:outline-none focus:border-primary"
+            className="w-full bg-slate-900 border border-slate-700 text-ink text-sm px-3 py-2 rounded-lg mb-4 focus:outline-none focus:border-primary"
           />
 
           <span className="text-xs text-slate-300 block mb-2 font-medium">Color de avatar y cursor</span>
@@ -96,7 +96,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
                   aria-label={`Seleccionar color ${presetColor}`}
                   style={{ backgroundColor: presetColor }}
                   className={`w-7 h-7 rounded-full flex items-center justify-center transition ${
-                    selected ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'opacity-80 hover:opacity-100'
+                    selected ? 'ring-2 ring-ink ring-offset-2 ring-offset-surface scale-110' : 'opacity-80 hover:opacity-100'
                   }`}
                 >
                   {selected && <Check className="w-3.5 h-3.5 text-white" />}
@@ -109,7 +109,7 @@ function ProfileModalContent({ user, onClose, onSave }: Omit<Props, 'isOpen'>) {
             <button
               type="button"
               onClick={onClose}
-              className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg"
+              className="text-xs text-slate-400 hover:text-ink px-3 py-1.5 rounded-lg"
             >
               Cancelar
             </button>

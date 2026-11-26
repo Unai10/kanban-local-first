@@ -2,11 +2,17 @@ import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import {
   LIMITS,
   generateJoinCode,
+  generateNKeysBetween,
   generateSecureToken,
+  generateUuid,
   isValidTokenFormat,
   sanitizeHexColor,
   sanitizeSingleLineText,
+  type AssignableBoardRole,
+  type BoardExportSnapshot,
   type BoardMetaSyncItem,
+  type BoardRole,
+  type BoardTemplateId,
   type ServerBoardMetaPayload,
   type UserBoardEntry,
   type UserProfile,
@@ -18,7 +24,9 @@ import {
 import { AVATAR_COLORS, LocalUserRepository } from '../../../core/storage/localUserRepository.js';
 import { deleteBoardIndexedDb } from '../../../core/yjs/YjsRoomClient.js';
 import { APP_CONFIG } from '../../../core/config/env.js';
-import { BoardContext, type BoardContextValue } from './BoardContext.js';
+import { BoardContext, type AppTheme, type BoardContextValue } from './BoardContext.js';
+
+const THEME_STORAGE_KEY = 'kanban_theme';
 
 const PENDING_OWNER_NAME_SYNC_KEY = 'kanban_pending_owner_name_sync';
 const PENDING_BOARD_LEAVES_KEY = 'kanban_pending_board_leaves';
@@ -109,12 +117,42 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     LocalBoardRepository.getRegisteredBoards()
   );
 
+  const [theme, setTheme] = useState<AppTheme>(() => {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCreateBoardModalOpen, setIsCreateBoardModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isRolesModalOpen, setIsRolesModalOpen] = useState(false);
+  const [isMetricsModalOpen, setIsMetricsModalOpen] = useState(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.dataset.theme = 'dark';
+    } else {
+      root.classList.remove('dark');
+      root.dataset.theme = 'light';
+    }
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignorar si localStorage no está disponible
+    }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  }, []);
 
   const activeBoardIdRef = useRef(boardInfo.boardId);
   const boardInfoRef = useRef(boardInfo);
@@ -136,7 +174,15 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     setNotification(null);
   }, []);
 
-  const applyBoardSelection = useCallback((newBoardId: string, token: string, pushHistory: boolean) => {
+  const applyBoardSelection = useCallback((
+    newBoardId: string,
+    token: string,
+    pushHistory: boolean,
+    extras?: {
+      initialTemplateId?: BoardTemplateId;
+      initialImportSnapshot?: BoardExportSnapshot;
+    }
+  ) => {
     const isOnline = typeof navigator === 'undefined' || navigator.onLine;
     if (isOnline) {
       LocalBoardRepository.clearBoardMetaNotifications(newBoardId);
@@ -146,7 +192,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     const target = registered.find(b => b.id === newBoardId);
     const title = target?.title || 'Tablero';
     const isOwner = isValidTokenFormat(target?.ownerToken);
-    const role: 'owner' | 'member' = isOwner ? 'owner' : 'member';
+    const role: BoardRole = isOwner ? 'owner' : (target?.role === 'admin' ? 'admin' : 'member');
     const ownerId = target?.ownerId || (isOwner ? currentUser.id : '');
     const ownerName = isOwner ? currentUser.name : (target?.ownerName || 'Propietario');
 
@@ -165,6 +211,8 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       role,
       ownerId,
       ownerName,
+      ...(extras?.initialTemplateId ? { initialTemplateId: extras.initialTemplateId } : {}),
+      ...(extras?.initialImportSnapshot ? { initialImportSnapshot: extras.initialImportSnapshot } : {}),
     });
     setBoards(registered);
     setIsSidebarOpen(false);
@@ -287,7 +335,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const createBoard = useCallback((rawTitle: string) => {
+  const createBoard = useCallback((rawTitle: string, templateId: BoardTemplateId = 'classic') => {
     const title = sanitizeSingleLineText(rawTitle, LIMITS.BOARD_TITLE_MAX, 'Tablero');
     const slug = title
       .toLowerCase()
@@ -313,8 +361,137 @@ export function BoardProvider({ children }: { children: ReactNode }) {
 
     LocalBoardRepository.saveRegisteredBoard(newEntry);
     setBoards(LocalBoardRepository.getRegisteredBoards());
-    selectBoard(newBoardId, inviteToken);
-  }, [currentUser.id, currentUser.name, selectBoard]);
+    applyBoardSelection(newBoardId, inviteToken, true, { initialTemplateId: templateId });
+  }, [currentUser.id, currentUser.name, applyBoardSelection]);
+
+  const importBoardFromSnapshot = useCallback((snapshot: BoardExportSnapshot) => {
+    const title = sanitizeSingleLineText(snapshot.title, LIMITS.BOARD_TITLE_MAX, 'Tablero Importado');
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32) || 'tablero';
+    const newBoardId = `${slug}-${generateSecureToken('').substring(0, 8)}`;
+    const inviteToken = generateSecureToken();
+    const ownerToken = generateSecureToken();
+    const joinCode = generateJoinCode();
+
+    // Regenerar IDs y claves fraccionarias limpias para evitar colisiones
+    const colKeys = generateNKeysBetween(null, null, snapshot.columns.length);
+    const colIdMap = new Map<string, string>();
+    const remappedColumns = snapshot.columns.map((col, idx) => {
+      const nextId = `col-${generateUuid().slice(0, 8)}`;
+      colIdMap.set(col.id, nextId);
+      return {
+        ...col,
+        id: nextId,
+        orderKey: colKeys[idx],
+      };
+    });
+
+    const cardIdMap = new Map<string, string>();
+    const cardsByTargetCol = new Map<string, typeof snapshot.cards>();
+    for (const card of snapshot.cards) {
+      const targetColId = colIdMap.get(card.columnId) ?? remappedColumns[0].id;
+      const list = cardsByTargetCol.get(targetColId) ?? [];
+      list.push(card);
+      cardsByTargetCol.set(targetColId, list);
+    }
+
+    const remappedCards: BoardExportSnapshot['cards'] = [];
+    for (const [targetColId, colCards] of cardsByTargetCol.entries()) {
+      const cardKeys = generateNKeysBetween(null, null, colCards.length);
+      colCards.forEach((card, idx) => {
+        const nextCardId = generateUuid();
+        cardIdMap.set(card.id, nextCardId);
+        remappedCards.push({
+          ...card,
+          id: nextCardId,
+          columnId: targetColId,
+          orderKey: cardKeys[idx],
+        });
+      });
+    }
+
+    const remappedComments: BoardExportSnapshot['comments'] = [];
+    for (const cm of snapshot.comments) {
+      const targetCardId = cardIdMap.get(cm.cardId);
+      if (!targetCardId) continue;
+      remappedComments.push({
+        ...cm,
+        id: `cmt-${generateUuid().slice(0, 12)}`,
+        cardId: targetCardId,
+      });
+    }
+
+    const normalizedSnapshot: BoardExportSnapshot = {
+      version: 1,
+      exportedAt: Date.now(),
+      title,
+      columns: remappedColumns,
+      cards: remappedCards,
+      comments: remappedComments,
+    };
+
+    const newEntry: UserBoardEntry = {
+      id: newBoardId,
+      title,
+      role: 'owner',
+      ownerId: currentUser.id,
+      ownerName: currentUser.name,
+      inviteToken,
+      ownerToken,
+      joinCode,
+      lastOpenedAt: Date.now(),
+    };
+
+    LocalBoardRepository.saveRegisteredBoard(newEntry);
+    setBoards(LocalBoardRepository.getRegisteredBoards());
+    applyBoardSelection(newBoardId, inviteToken, true, { initialImportSnapshot: normalizedSnapshot });
+  }, [currentUser.id, currentUser.name, applyBoardSelection]);
+
+  const updateMemberRole = useCallback(async (
+    boardId: string,
+    targetUserId: string,
+    role: AssignableBoardRole
+  ): Promise<boolean> => {
+    const registered = LocalBoardRepository.getRegisteredBoards();
+    const target = registered.find(b => b.id === boardId);
+    const ownerToken = target?.ownerToken || (activeBoardIdRef.current === boardId ? boardInfoRef.current.ownerToken : undefined);
+
+    if (!isValidTokenFormat(ownerToken)) {
+      setNotification('Solo el propietario puede gestionar los roles del tablero.');
+      return false;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setNotification('Necesitas conexión a internet para asignar o revocar el rol de administrador.');
+      return false;
+    }
+
+    try {
+      const response = await fetch(
+        `${APP_CONFIG.getHttpApiUrl()}/api/boards/${encodeURIComponent(boardId)}/roles`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${ownerToken}`,
+          },
+          body: JSON.stringify({ userId: targetUserId, role }),
+        }
+      );
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null;
+        setNotification(errBody?.error || 'No se pudo actualizar el rol del colaborador.');
+        return false;
+      }
+      return true;
+    } catch {
+      setNotification('No se pudo contactar con el servidor para actualizar el rol.');
+      return false;
+    }
+  }, []);
 
   const joinBoard = useCallback((
     targetBoardId: string,
@@ -453,7 +630,22 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     const isSameActive = prevInfo.boardId === meta.boardId;
     const resolvedOwnerName = meta.role === 'owner' ? currentUser.name : meta.ownerName;
 
-    if (isSameActive && meta.role === 'member') {
+    if (isSameActive && meta.columnsReverted) {
+      setNotification('Tu rol de administrador fue revocado. Se descartaron los cambios de columnas realizados sin conexión.');
+    } else if (
+      isSameActive &&
+      prevInfo.role !== meta.role &&
+      prevInfo.role !== 'owner' &&
+      meta.role !== 'owner'
+    ) {
+      setNotification(
+        meta.role === 'admin'
+          ? 'El propietario te ha asignado el rol de Administrador: ahora puedes gestionar columnas.'
+          : 'Tu rol de administrador ha sido revocado; ahora tienes permisos de Miembro.'
+      );
+    }
+
+    if (isSameActive && meta.role !== 'owner') {
       const existingEntry = LocalBoardRepository.getRegisteredBoards().find(b => b.id === meta.boardId);
       const oldTitle = existingEntry?.previousTitle ?? prevInfo.title;
       const oldOwner = existingEntry?.previousOwnerName ?? prevInfo.ownerName;
@@ -529,6 +721,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           boards: registered.map(b => ({
             boardId: b.id,
+            userId: currentUserRef.current.id,
             inviteToken: b.inviteToken || undefined,
             ownerToken: b.ownerToken || undefined,
             joinCode: b.joinCode || undefined,
@@ -568,6 +761,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
               ? {
                   ...prev,
                   title: currentActive.title,
+                  role: currentActive.role,
                   ownerName: currentActive.role === 'owner' ? currentUserRef.current.name : currentActive.ownerName,
                   joinCode: currentActive.joinCode || prev.joinCode,
                 }
@@ -668,11 +862,16 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     boardInfo,
     boards,
     currentUser,
+    theme,
+    toggleTheme,
     isSidebarOpen,
     isShareModalOpen,
     isCreateBoardModalOpen,
     isJoinModalOpen,
     isProfileModalOpen,
+    isRolesModalOpen,
+    isMetricsModalOpen,
+    isShortcutsModalOpen,
     notification,
     dismissNotification,
     openSidebar,
@@ -685,10 +884,18 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     closeJoinModal: () => setIsJoinModalOpen(false),
     openProfileModal: () => setIsProfileModalOpen(true),
     closeProfileModal: () => setIsProfileModalOpen(false),
+    openRolesModal: () => setIsRolesModalOpen(true),
+    closeRolesModal: () => setIsRolesModalOpen(false),
+    openMetricsModal: () => setIsMetricsModalOpen(true),
+    closeMetricsModal: () => setIsMetricsModalOpen(false),
+    openShortcutsModal: () => setIsShortcutsModalOpen(true),
+    closeShortcutsModal: () => setIsShortcutsModalOpen(false),
     updateUserProfile,
     selectBoard,
     createBoard,
+    importBoardFromSnapshot,
     renameBoard,
+    updateMemberRole,
     joinBoard,
     deleteBoard,
     leaveBoard,
